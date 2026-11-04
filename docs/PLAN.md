@@ -2,6 +2,11 @@
 
 Status: **planning** · Target: BMW E36 323i, M52B25, full sequential fuel + spark, knock control, custom tuning GUI.
 
+**The car:** 1997 UK-market E36 323i — M52B25 (pre-TU), Siemens MS41 DME, single (intake) VANOS,
+ASC traction control, two knock sensors, no OBD-II check-engine light.
+**The reason:** a plenum-ITB intake (individual throttle bodies inside an airbox) metered by the
+**stock MAF**, with full tuning control. Sensor inventory and what to measure: [CAR.md](CAR.md).
+
 This document turns the original project brief into an executable plan. It records
 what we are building, how the firmware, hardware and tuning software fit together,
 which parts of the brief need correcting, and the order we build and test them.
@@ -21,7 +26,7 @@ None of them threaten the project; several change the design.
 | 4 | Crank ISR *only* logs a timestamp and counts teeth | Events must be scheduled relative to a recent tooth to stay accurate during acceleration, so the ISR also does a cheap table lookup and arms an Output Compare when "this tooth is the reference tooth for an event". | All heavy math stays in the main loop, which pre-computes `(reference_tooth, delay_ticks)` pairs; the ISR does only a compare + add + register write. |
 | 5 | Main loop writes pulse width to the timer registers | On AVR, all 16-bit timer registers share **one TEMP byte**. If the main loop and an ISR both access 16-bit timer registers, values get corrupted. Also, in Normal mode OCR writes take effect immediately, so a late write can miss and wait a full timer wrap. | **Only ISRs touch timer registers.** Main loop hands schedules to ISRs through a double-buffered struct. ISR checks "is the target time already passed or too close?" and fires immediately (Force Output Compare) or skips instead of waiting 262 ms with a coil dwelling. |
 | 6 | 6 ignition drivers "or logic-level triggers for smart coils" | The M52's stock coil-on-plug coils are **"dumb" coils** (no built-in igniter); the stock MS41 drives them with IGBTs inside the DME. | Board needs 6 ignition IGBTs (400 V clamped, logic-level gate) unless we swap to smart coils. Dwell control is the firmware's job. |
-| 7 | MAP **or** MAF | Stock M52/MS41 is MAF-based (HFM hot-film). | Decision needed (§7). Recommended: speed-density (MAP + VE table) as primary, MAF input kept as a spare ADC channel. |
+| 7 | MAP **or** MAF | Stock M52/MS41 is MAF-based (HFM hot-film). | **Decided: stock MAF.** This suits a plenum-ITB build better than MAP: ITBs give a weak, noisy manifold vacuum signal, while a MAF on the airbox inlet sees the real airflow. It is blended with an Alpha-N (throttle × RPM) model for fast transients and low-RPM pulsation (§3.4, §3.8). |
 | 8 | Brief lists fuel + spark only | The M52 also needs: **single VANOS** solenoid (on/off), **dual-coil idle control valve** (two PWM outputs), fuel pump relay, main relay, tach output, check-engine light, optionally A/C compressor cut. | Extra outputs on the PCB (§2.3). |
 
 ---
@@ -33,7 +38,9 @@ None of them threaten the project; several change the design.
  Crank VR  ──►│ MAX9926 ch1 ─► ICP5 (PL1)                                │
  Cam Hall  ──►│ RC + clamp  ─► INT / PCINT                               │
  Knock 1,2 ──►│ TPIC8101 ◄─SPI─►                                         │
- TPS, MAP, CLT, IAT, WBO2, Vbatt ─► ADC (ratiometric to sensor 5 V)      │
+ MAF, TPS, CLT, IAT, WBO2, NBO2, Vbatt ─► ADC (ratiometric to sensor 5V) │
+ Road speed (from ABS/ASC) ─► GPIO                                        │
+ CAN (optional MCP2515) ◄─SPI─► ASC / gearbox, future                     │
               │                                                          │
               │          ATmega1280 @ 16 MHz                             │
               │   Timer1 OC1A/B/C ─► Injectors 1-3  (low-side drivers)   │
@@ -105,11 +112,13 @@ drop-in upgrade if flash ever gets tight — it shouldn't.)
 | Crank position | Inductive (VR) on the 60-2 wheel *(verify on car: MS41-era is VR, M52TU/MS42+ is Hall)* | MAX9926 channel 1, adaptive threshold, differential input, shielded twisted pair |
 | Cam position | Hall effect on intake cam *(verify)* | Pull-up, RC filter, Schmitt input, clamp. MAX9926 channel 2 footprint as a jumper option in case it's VR. |
 | Knock ×2 | Piezo, sensor 1 = cyl 1–3, sensor 2 = cyl 4–6 | **TI TPIC8101** dual-channel knock processor (programmable bandpass, gain, integrator; SPI). Check stock/lifecycle before committing; fallback below. |
-| TPS | Potentiometer | RC filter, clamp, ratiometric |
-| MAP | External 1-bar (NA) or 2-bar (future-proof) sensor | RC filter, clamp, ratiometric |
-| MAF (optional) | Stock HFM | Spare ADC channel |
-| CLT / IAT | NTC thermistors (CLT sensor is dual-element; ECU uses one element) | 2.49 kΩ pull-up to sensor 5 V, RC filter |
-| Wideband O2 | Bosch LSU 4.9 | External controller with 0–5 V output for v1 (on-board CJ125 is a possible rev B feature) |
+| **MAF (primary load)** | Stock Siemens HFM hot-film, 0–5 V | RC filter (light: keep the response fast), clamp, ratiometric. Sampled several times per intake event and averaged per cylinder (§3.8). |
+| TPS | Stock potentiometer now; the ITB kit's TPS later | RC filter, clamp, ratiometric. Becomes a primary input with ITBs (Alpha-N, acceleration enrichment). |
+| MAP (optional, spare) | Not fitted | Spare ADC channel; useful later as a barometer or for an ITB vacuum balance rail |
+| CLT / IAT | NTC thermistors (CLT sensor is dual-element; ECU uses one element, the gauge the other) | 2.49 kΩ pull-up to sensor 5 V, RC filter. The IAT has to be relocated into the ITB airbox. |
+| Wideband O2 | Bosch LSU 4.9 via an external controller (not yet bought) | 0–5 V analogue input. **Needed before the first start** (Phase 8), not before. |
+| Narrowband O2 ×2 | Stock pre-cat lambda sensors (verify count) | High-impedance input + filter; optional closed-loop at idle/cruise until the wideband is fitted. Heaters switched by a low-side output. |
+| Road speed | Square-wave from the ABS/ASC module | Input-capture/PCINT; used for idle logic and launch/limiter features |
 | Battery voltage | — | Divider + filter (used for injector dead-time and dwell compensation) |
 
 ADC reference = the same 5 V rail that powers the sensors, so supply drift cancels (ratiometric).
@@ -119,7 +128,8 @@ ADC reference = the same 5 V rail that powers the sensors, so supply drift cance
 | Output | Driver | Notes |
 |--------|--------|-------|
 | 6 × injector | Protected low-side switch (e.g. Infineon HITFET family) or logic-level MOSFET + zener flyback clamp | M52 injectors are high-impedance (~12–16 Ω, verify) → saturated drive, no peak-and-hold needed. Zener clamp (~36–40 V) closes the injector faster than a plain diode. |
-| 6 × ignition | Logic-level ignition IGBT with ~400 V clamp (e.g. ISL9V3040 class) | Gate pull-downs so coils are **off** while the MCU is in reset or unprogrammed. Firmware enforces max dwell. |
+| 6 × ignition | Logic-level ignition IGBT with ~400 V clamp (e.g. ISL9V3040 class) | **Decided: keep stock-type M52 coil-on-plug coils** (see §2.6). Gate pull-downs so coils are **off** while the MCU is in reset or unprogrammed. Firmware enforces max dwell. Each channel also has a jumper/assembly option to output a 5 V logic signal instead, so smart coils can be fitted later without a new board. |
+| 2 × narrowband heater | Low-side MOSFET | Only if the stock lambda sensors are kept |
 | Idle valve (2 coils) | 2 × low-side MOSFET + flyback diode | Driven as a complementary PWM pair from Timer2. |
 | VANOS solenoid | Low-side MOSFET + flyback diode | On/off. |
 | Fuel pump relay, main relay, CEL, A/C cut | Low-side MOSFET / protected switch | Relay coils need flyback diodes. |
@@ -137,10 +147,35 @@ ADC reference = the same 5 V rail that powers the sensors, so supply drift cance
 
 ### 2.5 Connection to the car
 
-Decision needed (§7): either a **plug-and-play board** that fits the stock DME connector (connector
-harvested from a dead MS41), or an **adapter harness** from the stock DME connector to the custom ECU's
-connector. Either way, swapping back to the stock DME must take minutes — this is the safety net for
-the whole project.
+**Decided: plug-and-play through a home-made adapter harness.**
+
+```
+ car harness ──► [DME-side connector from a donor MS41] ──► adapter harness ──► [sealed connector] ──► custom ECU
+  (untouched)         (on a small breakout PCB)               (you build it)      (e.g. TE Superseal/DTM)
+```
+
+- Buy a used/dead **Siemens MS41** DME (cheap at breakers/eBay; must match the car's connector). Its
+  connector header is removed and mounted on a small breakout board, so the car's own harness plugs in
+  exactly as it does into the stock DME. **No cutting of the car's loom.**
+- The adapter harness runs from the breakout to the custom ECU's own sealed automotive connector. The ITB
+  conversion's extra wiring (new TPS, relocated IAT, idle valve plumbing) joins at this harness too.
+- Swapping back to the stock DME is: unplug adapter, plug stock DME back in — minutes. This is the safety net
+  for the whole project and for getting home if anything goes wrong.
+- Exact pin assignments come from the E36 Electrical Troubleshooting Manual (ETM) for the car's build date,
+  confirmed with a multimeter in Phase 0 and recorded in `docs/CAR.md`.
+
+### 2.6 Coil choice
+
+You asked for the cheapest *and* most reliable option. That is the **stock M52 coil-on-plug coils**, driven
+by IGBTs on our board, exactly as the factory did it:
+
+- **Cheapest:** the ignition transistors cost a few pounds for all six. A replacement M52 coil from an
+  OE supplier (Bremi, Bosch, Beru) is inexpensive, and coils that are healthy now can simply be kept.
+- **Most reliable:** factory fit, factory plug wells, factory connectors, no brackets, adaptors or new leads.
+- Replace any coil that's cracked or shows a misfire, and fit new plugs, before the first start.
+
+Smart coils (built-in igniter, such as VAG "R8" coils on adaptor kits) only make sense later if the stock
+coils can't deliver enough spark at high RPM. The board keeps that option open (§2.3).
 
 ---
 
@@ -222,13 +257,24 @@ car and confirmed with a timing light (fixed-timing mode in the tuning software)
 
 ### 3.4 Engine math (main loop, fixed-point integers)
 
-**Fuel (speed density):**
+**Load = air mass per cylinder (mg/stroke), from the MAF blended with Alpha-N:**
 ```
-PW = REQ_FUEL × VE(rpm, map) × MAP × corrections + dead_time(vbatt)
-corrections = warmup(clt) × iat_density(iat) × accel_enrich(dTPS, dMAP) × closed_loop(afr_target − afr) × baro
+maf_gps      = MAF_curve(volts) × MAF_trim(rpm, tps)                 // stock HFM curve + correction table
+air_maf      = maf_gps × 20000 / rpm                                  // mg per cylinder per intake event (6 cyl, 4-stroke)
+air_alphaN   = VE_alphaN(rpm, tps) × cyl_volume × air_density(iat, baro)
+w            = blend(rpm, tps)                                        // 0…1 table: how much to trust the MAF
+air_per_cyl  = w × air_maf + (1 − w) × air_alphaN
 ```
-- `REQ_FUEL` derived from 2,494 cc / 6 cyl and measured injector flow.
-- AFR target table (rpm × load) drives the closed loop and the tuner's VE auto-tune.
+
+**Fuel:**
+```
+fuel_mg = air_per_cyl / AFR_target(rpm, load)
+PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed_loop(afr) + dead_time(vbatt)
+```
+- Injector flow measured/looked up for the stock M52 injectors; 2,494 cc / 6 cyl ≈ 416 cc per cylinder.
+- On the stock intake the blend table is ~100 % MAF everywhere. With ITBs it shifts toward Alpha-N where
+  the MAF struggles (§3.8).
+- AFR target table (rpm × load) drives the closed loop and the tuner's MAF-trim/VE auto-tune.
 - Cranking fuel and after-start enrichment tables.
 - Injection timing table: end-of-injection angle (rpm × load).
 
@@ -282,23 +328,50 @@ Cooperative, driven by the 1 kHz Timer0 tick:
 | 10 Hz | CLT, IAT, battery, VANOS, fan, fuel pump, sensor fault checks |
 | 1 Hz | Housekeeping, error counters |
 
+### 3.8 Plenum-ITB specifics
+
+What changes when the stock throttle body and manifold are replaced with ITBs inside an airbox:
+
+- **MAF pulsation.** Each ITB opens almost straight into the airbox, so the airflow the MAF sees pulses
+  with every intake stroke, worst at low RPM and wide throttle. A hot-film MAF can't tell forward from
+  reverse flow, so it over-reads when air bounces back. Countermeasures: a large airbox, MAF well
+  upstream of the trumpets, **crank-synchronous MAF sampling** (several ADC samples per 120° intake event,
+  averaged per cylinder), a MAF trim table, and the Alpha-N blend wherever the MAF signal is bad.
+- **Throttle response.** With ITBs the throttle directly controls each cylinder, so airflow changes faster
+  than the MAF reading. Throttle-rate acceleration enrichment and the Alpha-N blend cover the transient.
+- **MAF range.** An ITB engine may breathe beyond what the 2.5 L HFM housing can measure (signal flat-lines
+  near 5 V at high RPM). The tuner logs MAF volts against RPM; if it saturates, use a larger housing
+  (for example the 2.8's) with its own curve, or let Alpha-N take over at the top end.
+- **Idle.** ITBs leave no single throttle to bypass. Options, both supported: route the stock idle valve
+  into a vacuum balance rail that joins all six runners after the throttles; and/or ignition-timing idle
+  control (fast and effective with ITBs).
+- **Sensors to move/add:** TPS onto the ITB linkage; IAT into the airbox; optionally a MAP sensor on the
+  balance rail (spare input) for diagnostics and throttle-sync checks.
+- **Order of work:** the ECU is first brought up and tuned on the **stock intake** (known-good engine,
+  MAF-only load), and only then is the ITB plenum fitted. Changing the ECU and the intake at the same time
+  would leave two unknowns when something doesn't run right.
+
 ---
 
 ## 4. Communication protocol (ECU ↔ tuner)
 
-- UART0 over USB at **500,000 baud** (0 % error at 16 MHz; 115,200 has 2.1 % error on AVR).
-- Binary framing: `[0xA5][len][cmd][payload…][crc16]`, response mirrors command with status byte.
-- Commands: `HELLO/VERSION` (firmware + definition signature), `GET_REALTIME`, `READ_PAGE(page, off, len)`,
-  `WRITE_PAGE(page, off, data)` (live, RAM only), `BURN(page)` (to EEPROM), `START/STOP_STREAM(rate)`,
+- UART0 over USB, 115,200 baud default (the rate Mega-based ECUs use with TunerStudio); higher rates
+  (e.g. 500,000, 0 % error at 16 MHz) selectable for our own tuner.
+- **Decided: TunerStudio-compatible framing** — the length-prefixed, CRC32-checked serial protocol that
+  Speeduino and rusEFI also implement. Our own tuner speaks the same protocol, so the firmware has one
+  protocol and two GUIs can talk to it (§5).
+- Commands (mapped onto that protocol's command set): signature/version, realtime data, page read,
+  page write (live, RAM only), burn to EEPROM, plus our extensions:
   `TOOTH_LOGGER`, `COMPOSITE_LOGGER` (crank+cam edges), `KNOCK_LOGGER`, `SET_TEST_MODE` (fixed timing,
   injector/coil output tests), `REBOOT_TO_BOOTLOADER`.
-- Realtime packet ~64 bytes at 50 Hz ≈ 3.2 KB/s, well within the link.
+- Realtime packet ~64 bytes at 30–50 Hz ≈ 2–3.2 KB/s, within the 11.5 KB/s link.
 
 **Single source of truth:** one definition file (`definitions/ecu.yaml`) describes every page, table, axis,
 scalar, scale, unit and realtime channel. A code generator produces:
 - the C structs + offsets for the firmware (`firmware/src/generated/`),
 - the tuner's table/gauge definitions,
-so firmware and GUI can never disagree about memory layout. (This plays the role TunerPro's XDF plays —
+- a TunerStudio `.ini`,
+so firmware and GUIs can never disagree about memory layout. (This plays the role TunerPro's XDF plays —
 but generated, not hand-written.) Firmware reports the definition's hash; the tuner refuses to write to a
 mismatched ECU.
 
@@ -319,11 +392,14 @@ enough that a later rewrite (C++/Qt, C#) would be straightforward if ever needed
 | T3 — Tune files | Save/load tune file (JSON with definition hash), offline editing, compare two tunes (diff view), import older tunes across definition versions |
 | T4 — Logging | Record datalogs, log viewer with time-series graphs, scrub/playback, table cursor trace showing where the engine is operating |
 | T5 — Diagnostics | Tooth logger + composite logger (crank/cam edges) view, knock per-cylinder view, output test panel (fire individual injector/coil), fixed-timing mode for timing-light calibration |
-| T6 — Auto-tune | VE analyser: from logs, filter steady-state cells and compute VE corrections from AFR error; proposes changes cell-by-cell for approval |
+| T6 — Auto-tune | From logs, filter steady-state cells and compute MAF-trim and Alpha-N VE corrections from AFR error; proposes changes cell-by-cell for approval |
+| T8 — Guided setup | Beginner-friendly wizards: sensor calibration (TPS min/max, thermistors), trigger offset with a timing light, injector setup, base tune generator from engine data |
 | T7 — Firmware | Flash firmware via bootloader (avrdude) from inside the app |
 
-**Optional risk reducer:** the same definition file could also generate a TunerStudio-style `.ini`, giving a
-mature fallback GUI for the first engine start while our tuner is still young. Worth deciding before Phase 4.
+**Decided: TunerStudio as a fallback.** Since you're new to tuning, the first engine start shouldn't depend on
+brand-new GUI code. The generated `.ini` lets the free TunerStudio MS Lite (a mature, widely documented
+tuner) connect to our ECU from day one. Our own tuner is the main tool and grows milestone by milestone.
+Anything learned from TunerStudio's tutorials (table editing, logging, autotune) transfers directly.
 
 ---
 
@@ -333,7 +409,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 
 | Phase | Goal | Done when |
 |-------|------|-----------|
-| **0. Car reconnaissance** | Measure the real engine | Pinout of the stock DME connector documented; crank/cam waveforms scoped at cranking and idle (VR vs Hall, cam pattern, VANOS shift); gap-to-TDC offset estimated; injector and coil primary resistance measured; knock sensor signals captured; car options checked (manual/auto, ASC, EWS — see §8) |
+| **0. Car reconnaissance** | Know exactly what's on the car | Every item in the [CAR.md](CAR.md) checklist filled in: sensor inventory confirmed, DME connector pinout from the ETM checked with a multimeter, crank/cam waveforms captured at cranking and idle (VR vs Hall, cam pattern, VANOS shift), injector and coil resistance measured, knock signals captured, starter-with-DME-unplugged test done |
 | **1. Foundations** | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 100 to 8,000 RPM |
 | **2. Decoder** | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
 | **3. Scheduler** | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
@@ -341,29 +417,40 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |
 | **7. Sniffer mode on the car** | Validate decoder on the real engine with zero risk | Custom ECU wired **in parallel** to stock crank/cam/knock/sensors (outputs disconnected) while the stock DME runs the car; logs show solid sync, correct RPM and sensible sensor values through drives |
-| **8. First start** | Engine runs on the custom ECU | Base tune derived from displacement/injectors; timing confirmed with timing light; starts, idles, revs; failsafes verified |
-| **9. Tuning & refinement** | Drives properly | Closed-loop AFR, idle control, VANOS, warm-up/accel enrichment, knock calibration (noise learning, thresholds), VE auto-tune on the road/dyno, tuner T4–T7 |
+| **8. First start (stock intake)** | Engine runs on the custom ECU | Wideband fitted; base tune from the stock HFM curve and injector data; timing confirmed with timing light; starts, idles, revs; failsafes verified |
+| **9. Tuning & refinement (stock intake)** | Drives as well as stock | Closed-loop AFR, idle valve control, VANOS, warm-up/accel enrichment, knock calibration (noise learning, thresholds), MAF-trim auto-tune, tuner T4–T8 |
+| **10. ITB conversion** | Plenum ITBs on the known-good ECU | ITB TPS, relocated IAT and idle air plumbed; blend table and Alpha-N VE tuned; MAF pulsation and saturation checked in logs; throttle sync set; knock re-checked; dyno or careful road tuning |
 
 Suggested parallelisation: hardware design (Phase 6) can start right after Phase 0 measurements, while
 firmware Phases 1–5 progress on the dev board.
 
 ---
 
-## 7. Open decisions
+## 7. Decisions
 
-1. **Load sensing:** speed-density with a MAP sensor (recommended) or stock MAF (HFM)? Or both, blendable?
-2. **Car connection:** plug-and-play board in the stock DME connector, or adapter harness?
-3. **Ignition:** keep the stock dumb coils with on-board IGBTs (recommended), or swap to smart coils?
-4. **Wideband:** external controller with 0–5 V output for v1 (recommended), or on-board CJ125?
-5. **Tuning GUI stack:** Python + PySide6 (recommended), or C++/Qt / C# WPF?
-6. **TunerStudio `.ini` as a fallback** for the first start — yes or no?
-7. **Car specifics:** model year / DME (MS41?), manual or automatic, ASC/traction control?
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Load sensing | Stock HFM MAF, blended with Alpha-N for the ITB build (§3.4, §3.8) |
+| 2 | Car connection | Plug-and-play: donor MS41 connector + home-made adapter harness (§2.5) |
+| 3 | Coils | Stock-type M52 dumb coils + on-board IGBTs; smart-coil option kept on the board (§2.6) |
+| 4 | Wideband | External LSU 4.9 controller with 0–5 V output, bought before Phase 8 |
+| 5 | Tuning GUI | Own tuner in Python + PySide6 |
+| 6 | Fallback GUI | TunerStudio-compatible protocol + generated `.ini` |
+| 7 | Car | 1997 UK E36 323i, M52B25, MS41, single VANOS, ASC, 2 knock sensors |
+
+**Still open:**
+- Manual or automatic gearbox? (An automatic's gearbox computer expects data from the DME.)
+- Which ITB kit (or a home-made one)? Where do its injectors sit, and does it come with a TPS?
+- Keep the stock narrowband lambda sensors for closed-loop cruise, or rely on the wideband only?
 
 ## 8. Risks and things to verify early
 
 | Risk | Mitigation |
 |------|-----------|
-| Automatic gearbox (EGS) or ASC expect data from the DME | Check in Phase 0. If present, may need an extra interface (possibly CAN via an MCP2515 on SPI) or accept loss of that function. |
+| **ASC** expects data from the DME (engine speed/torque, and it asks the DME to cut power when wheels spin) | Without those messages the ASC module will most likely show its warning light and switch traction control off, while ABS keeps working — confirm on the car with the stock DME unplugged. ITBs remove ASC's throttle intervention anyway. The board carries an optional CAN interface (MCP2515 on SPI) so the DME messages can be emulated later if wanted. |
+| Automatic gearbox (EGS) expects data from the DME | Only if the car is an automatic — same CAN option as ASC. |
+| MAF pulsation / saturation with ITBs | Crank-synchronous MAF averaging, MAF trim table, Alpha-N blend, larger housing if it saturates (§3.8). |
+| Stock HFM transfer curve unknown | Start from published data for the HFM part number, correct with the wideband using the MAF-trim auto-tune. |
 | EWS immobiliser interaction with starter / DME | Verify the starter still works with the stock DME unplugged; the custom ECU itself ignores EWS. |
 | EMI resets or false teeth from ignition noise | Hardware filtering (§2.4), decoder tooth-validity checks, error counters in realtime data, sniffer-mode testing before driving. |
 | TPIC8101 availability | Confirm stock early; analogue fallback design (§3.5). |
@@ -387,7 +474,8 @@ hardware/      KiCad project
 
 ## 10. Immediate next steps
 
-1. Answer the open decisions in §7.
-2. Phase 0: borrow/buy a cheap USB scope or logic analyser; capture crank, cam and knock signals with the
-   stock DME running; record the DME connector pinout.
-3. Phase 1 in parallel: set up the firmware build, HAL timers with synchronised start, and the trigger simulator.
+1. Answer the remaining questions in §7.
+2. Buy the Phase 0/1 kit (shopping list in [CAR.md](CAR.md)): Arduino Mega, a second small Arduino, a USB
+   logic analyser, a basic oscilloscope, a donor MS41 DME, and the E36 wiring diagrams (ETM).
+3. Phase 0: work through the [CAR.md](CAR.md) checklist on the car.
+4. Phase 1 in parallel: firmware build system, HAL timers with synchronised start, and the trigger simulator.
