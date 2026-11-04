@@ -8,4 +8,6 @@ and a custom desktop tuning application.
 - Project plan: [docs/PLAN.md](docs/PLAN.md)
 - Car profile, sensor inventory and Phase 0 checklist: [docs/CAR.md](docs/CAR.md)
 
-Status: planning.
+- Firmware build/test/flash and trigger simulator wiring: [firmware/README.md](firmware/README.md)
+
+Status: Phase 1 (firmware foundations + trigger simulator) done in simulation.

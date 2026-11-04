@@ -204,6 +204,8 @@ coils can't deliver enough spark at high RPM. The board keeps that option open (
 
 - avr-gcc + avr-libc, CMake (or plain Make), avrdude. No Arduino core, no `digitalWrite`/`analogRead`.
 - Host build of all engine-math modules with the native gcc for unit tests (`firmware/test/`).
+- Whole-firmware tests in the simavr simulator (`make sim-test`). Hardware-timed outputs are checked via
+  the timer register writes, because simavr mis-models output-compare pins in Normal mode.
 - Bootloader: stk500v2-compatible (as on the Mega) so the tuning software can flash over USB.
 
 ```
@@ -473,7 +475,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | Phase | Goal | Done when |
 |-------|------|-----------|
 | **0. Car reconnaissance** | Know exactly what's on the car | Every item in the [CAR.md](CAR.md) checklist filled in: sensor inventory confirmed, DME connector pinout from the ETM checked with a multimeter, crank/cam waveforms captured at cranking and idle (VR vs Hall, cam pattern, VANOS shift), injector and coil resistance measured, knock signals captured, starter-with-DME-unplugged test done |
-| **1. Foundations** | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 100 to 8,000 RPM |
+| **1. Foundations** ✅ (in simulation) | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 20 to 9,000 RPM. Verified in simavr; still to verify on real boards (see `firmware/README.md`) |
 | **2. Decoder** | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
 | **3. Scheduler** | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
 | **4. Engine math + tuner MVP** | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tuner T1–T3: live gauges, edit tables, burn, save tune |
