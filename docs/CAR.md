@@ -16,8 +16,10 @@ This file is the record of what is actually on the car. Everything marked **expe
 | Knock control | Yes, two knock sensors expected |
 | Check-engine light | None (pre-OBD-II UK car) |
 | Immobiliser | EWS expected |
-| Gearbox | **? manual / automatic** |
-| Planned intake | Individual throttle bodies inside a plenum/airbox, stock MAF on the inlet |
+| Gearbox | Manual |
+| Planned intake | Home-made ITBs from motorcycle throttle bodies inside a plenum/airbox, stock MAF on the inlet |
+| Planned injectors | Motorcycle injectors in the ITBs, aimed at the intake valves |
+| Lambda | Stock narrowbands (one per bank) + a wideband to be added |
 
 ## 2. Expected sensors and actuators — confirm each one
 
@@ -70,9 +72,28 @@ Do these with the **stock DME still running the car**.
    (gives the trigger offset).
 8. ☐ With the stock DME **unplugged** and ignition on: does the starter still crank? Which warning lights come on
    (ASC, others)? This tells us what EWS and ASC do without a DME.
-9. ☐ Gearbox: manual or automatic?
+9. ☑ Gearbox: manual.
 
-## 4. DME connector pinout
+## 4. ITB build data
+
+*(Fill in once the parts are chosen. The ECU base tune is calculated from these.)*
+
+| Item | Value |
+|------|-------|
+| Donor motorcycle (make, model, year) | |
+| Number of ITB sets / throttles per set | |
+| Throttle bore (mm) | |
+| Secondary butterflies removed/locked? | |
+| TPS: type, supply voltage, pinout, one or two fitted | |
+| Injector part number | |
+| Injector rated flow (cc/min) and test pressure (bar) | |
+| Injector resistance (Ω) — measured | |
+| Fuel pressure regulator reference (airbox / balance rail) | |
+| Idle air: stock idle valve into a balance rail? | |
+| Runner length, trumpet length (mm) | |
+| Airbox volume (litres, approx.) | |
+
+## 5. DME connector pinout
 
 *(Fill in from the ETM, then confirm each pin with a multimeter.)*
 
@@ -80,7 +101,7 @@ Do these with the **stock DME still running the car**.
 |--------|-----|-------------|----------|-----------|-----------|
 | | | | | | |
 
-## 5. Shopping list
+## 6. Shopping list
 
 **Phase 0–1 (now):**
 

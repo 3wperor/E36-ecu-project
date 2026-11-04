@@ -3,9 +3,10 @@
 Status: **planning** · Target: BMW E36 323i, M52B25, full sequential fuel + spark, knock control, custom tuning GUI.
 
 **The car:** 1997 UK-market E36 323i — M52B25 (pre-TU), Siemens MS41 DME, single (intake) VANOS,
-ASC traction control, two knock sensors, no OBD-II check-engine light.
-**The reason:** a plenum-ITB intake (individual throttle bodies inside an airbox) metered by the
-**stock MAF**, with full tuning control. Sensor inventory and what to measure: [CAR.md](CAR.md).
+ASC traction control, two knock sensors, no OBD-II check-engine light, **manual gearbox**.
+**The reason:** a plenum-ITB intake built from **motorcycle throttle bodies** inside an airbox, with the
+injectors mounted in the ITBs aimed at the intake valves, metered by the **stock MAF**, with full tuning
+control. Both **narrowband and wideband** lambda control are supported. Sensor inventory and what to measure: [CAR.md](CAR.md).
 
 This document turns the original project brief into an executable plan. It records
 what we are building, how the firmware, hardware and tuning software fit together,
@@ -85,6 +86,24 @@ timers — one per injector and coil. Each fires a pin edge in hardware with zer
 | Tuning link | UART0 | PE0 / PE1 | D0 / D1 (USB) |
 | System tick (1 kHz) | Timer0 (ISR only, no pin) | — | — |
 
+Remaining I/O (dev-board mapping; the single source in code is `firmware/src/board.h`):
+
+| Function | MCU pin | Mega pin | | Function | ADC | Mega pin |
+|----------|---------|----------|-|----------|-----|----------|
+| Fuel pump relay | PA0 | D22 | | MAF | ADC0 | A0 |
+| Main relay | PA1 | D23 | | TPS 1 | ADC1 | A1 |
+| VANOS solenoid | PA2 | D24 | | TPS 2 | ADC2 | A2 |
+| Narrowband heater 1 | PA3 | D25 | | Coolant temp | ADC3 | A3 |
+| Narrowband heater 2 | PA4 | D26 | | Intake air temp | ADC4 | A4 |
+| Tach out | PA5 | D27 | | Wideband (0–5 V) | ADC5 | A5 |
+| Warning lamp | PA6 | D28 | | Narrowband bank 1 | ADC6 | A6 |
+| A/C compressor cut | PA7 | D29 | | Narrowband bank 2 | ADC7 | A7 |
+| Purge valve | PC0 | D37 | | Battery voltage | ADC8 | A8 |
+| Fuel consumption (TI) out | PC1 | D36 | | MAP (balance rail, optional) | ADC9 | A9 |
+| Knock IC INT/HOLD | PC2 | D35 | | Spare | ADC10–15 | A10–A15 |
+| Knock IC chip select | PB0 | D53 | | | | |
+| Road speed in | PD0 (INT0) | D21 | | | | |
+
 Outputs are numbered by **cylinder**, not by firing order; the firing order
 1-5-3-6-2-4 lives in firmware as a per-cylinder TDC angle table (0°, 480°, 240°, 600°, 120°, 360°
 for cylinders 1–6). This keeps wiring and the tuning GUI intuitive.
@@ -113,11 +132,11 @@ drop-in upgrade if flash ever gets tight — it shouldn't.)
 | Cam position | Hall effect on intake cam *(verify)* | Pull-up, RC filter, Schmitt input, clamp. MAX9926 channel 2 footprint as a jumper option in case it's VR. |
 | Knock ×2 | Piezo, sensor 1 = cyl 1–3, sensor 2 = cyl 4–6 | **TI TPIC8101** dual-channel knock processor (programmable bandpass, gain, integrator; SPI). Check stock/lifecycle before committing; fallback below. |
 | **MAF (primary load)** | Stock Siemens HFM hot-film, 0–5 V | RC filter (light: keep the response fast), clamp, ratiometric. Sampled several times per intake event and averaged per cylinder (§3.8). |
-| TPS | Stock potentiometer now; the ITB kit's TPS later | RC filter, clamp, ratiometric. Becomes a primary input with ITBs (Alpha-N, acceleration enrichment). |
+| TPS ×2 | Stock potentiometer now; motorcycle ITB TPS later (one per bank if two ITB sets are used) | RC filter, clamp, ratiometric. Becomes a primary input with ITBs (Alpha-N, acceleration enrichment). Two inputs let both banks be monitored: average them, and flag a fault if they disagree (linkage or sensor failure). |
 | MAP (optional, spare) | Not fitted | Spare ADC channel; useful later as a barometer or for an ITB vacuum balance rail |
 | CLT / IAT | NTC thermistors (CLT sensor is dual-element; ECU uses one element, the gauge the other) | 2.49 kΩ pull-up to sensor 5 V, RC filter. The IAT has to be relocated into the ITB airbox. |
 | Wideband O2 | Bosch LSU 4.9 via an external controller (not yet bought) | 0–5 V analogue input. **Needed before the first start** (Phase 8), not before. |
-| Narrowband O2 ×2 | Stock pre-cat lambda sensors (verify count) | High-impedance input + filter; optional closed-loop at idle/cruise until the wideband is fitted. Heaters switched by a low-side output. |
+| Narrowband O2 ×2 | Stock pre-cat lambda sensors, one per bank (verify count) | High-impedance input (~1 MΩ) + filter, 0–1 V range. Heaters switched by low-side PWM outputs. Both lambda modes are supported (§3.9). |
 | Road speed | Square-wave from the ABS/ASC module | Input-capture/PCINT; used for idle logic and launch/limiter features |
 | Battery voltage | — | Divider + filter (used for injector dead-time and dwell compensation) |
 
@@ -129,7 +148,7 @@ ADC reference = the same 5 V rail that powers the sensors, so supply drift cance
 |--------|--------|-------|
 | 6 × injector | Protected low-side switch (e.g. Infineon HITFET family) or logic-level MOSFET + zener flyback clamp | M52 injectors are high-impedance (~12–16 Ω, verify) → saturated drive, no peak-and-hold needed. Zener clamp (~36–40 V) closes the injector faster than a plain diode. |
 | 6 × ignition | Logic-level ignition IGBT with ~400 V clamp (e.g. ISL9V3040 class) | **Decided: keep stock-type M52 coil-on-plug coils** (see §2.6). Gate pull-downs so coils are **off** while the MCU is in reset or unprogrammed. Firmware enforces max dwell. Each channel also has a jumper/assembly option to output a 5 V logic signal instead, so smart coils can be fitted later without a new board. |
-| 2 × narrowband heater | Low-side MOSFET | Only if the stock lambda sensors are kept |
+| 2 × narrowband heater | Low-side MOSFET, PWM | Soft warm-up ramp to avoid cracking a wet sensor |
 | Idle valve (2 coils) | 2 × low-side MOSFET + flyback diode | Driven as a complementary PWM pair from Timer2. |
 | VANOS solenoid | Low-side MOSFET + flyback diode | On/off. |
 | Fuel pump relay, main relay, CEL, A/C cut | Low-side MOSFET / protected switch | Relay coils need flyback diodes. |
@@ -271,7 +290,8 @@ air_per_cyl  = w × air_maf + (1 − w) × air_alphaN
 fuel_mg = air_per_cyl / AFR_target(rpm, load)
 PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed_loop(afr) + dead_time(vbatt)
 ```
-- Injector flow measured/looked up for the stock M52 injectors; 2,494 cc / 6 cyl ≈ 416 cc per cylinder.
+- Injector flow from the motorcycle injectors' data (measured if unknown), corrected for actual fuel
+  pressure; 2,494 cc / 6 cyl ≈ 416 cc per cylinder.
 - On the stock intake the blend table is ~100 % MAF everywhere. With ITBs it shifts toward Alpha-N where
   the MAF struggles (§3.8).
 - AFR target table (rpm × load) drives the closed loop and the tuner's MAF-trim/VE auto-tune.
@@ -347,11 +367,54 @@ What changes when the stock throttle body and manifold are replaced with ITBs in
   control (fast and effective with ITBs).
 - **Sensors to move/add:** TPS onto the ITB linkage; IAT into the airbox; optionally a MAP sensor on the
   balance rail (spare input) for diagnostics and throttle-sync checks.
+- **Motorcycle throttle bodies:**
+  - *Banks and linkage.* Bike ITBs usually come in sets of 4 (or 3 on triples). Six cylinders means two
+    sets (e.g. two 4-throttle sets cut down to 3, or two triples), joined by a linkage and synchronised with
+    vacuum gauges. Hence the two TPS inputs.
+  - *Secondary butterflies* (fitted to many sports bikes) must be removed or locked fully open.
+  - *Spacing.* Bike bore spacing is narrower than the M52's, so the runners/adaptors have to splay out
+    to the head ports. This is mechanical work outside the ECU, but runner length affects the VE map.
+  - *TPS resolution.* With ITBs nearly all the airflow change happens in the first ~20 % of throttle. The
+    TPS axis of every Alpha-N table is therefore bunched at small openings (e.g. 0, 1, 2, 3, 5, 7, 10, 15, 20,
+    30 … 100 %), and the TPS signal is filtered lightly so small movements still register.
+- **Injectors in the ITBs, aimed at the valves:**
+  - *Sizing.* Rule of thumb for ~200 hp at the crank (BSFC 0.5 lb/hp/h, 85 % max duty): ≥ ~210 cc/min
+    per injector *at the actual fuel pressure*. Many bike injectors are close to that, so check the part
+    number's flow. Flow scales with √pressure: going from a 3 bar rating to the M52's 3.5 bar adds ~8 %.
+  - *Impedance.* Our drivers are saturated (high-impedance, ~12 Ω+) drivers. Most modern bike
+    injectors are high-impedance, but confirm by measurement. Low-impedance injectors would need ballast
+    resistors or peak-and-hold drivers.
+  - *Connectors* differ from BMW's; the adapter harness takes care of that.
+  - *Injection timing.* The end-of-injection table aims to finish spraying just before the intake valve
+    opens at low load (fuel lands on the hot closed valve), moving to open-valve injection where the pulse is
+    too long to fit.
+  - *Fuel pressure regulator reference.* The stock regulator's vacuum port should go to the airbox
+    (constant pressure across the injector), or to the balance rail. With an airbox reference the fuel
+    equation needs no pressure correction; a MAP sensor on the balance rail can add one later.
 - **Order of work:** the ECU is first brought up and tuned on the **stock intake** (known-good engine,
   MAF-only load), and only then is the ITB plenum fitted. Changing the ECU and the intake at the same time
   would leave two unknowns when something doesn't run right.
 
 ---
+
+### 3.9 Lambda (O2) control — narrowband and wideband
+
+Both sensor types are wired permanently; the tune selects how they are used.
+
+| Mode | Uses | Closed loop where | How |
+|------|------|-------------------|-----|
+| **Off** | — | Never | Open loop from tables only (first start, fault fallback) |
+| **Narrowband** | Two stock sensors, one per bank | Idle and light-load cruise, at stoichiometric only (λ = 1) | Classic switching PI controller per bank: ramp fuel lean until the sensor flips rich, then step back. **Bank trims**: bank 1 (cylinders 1–3) and bank 2 (cylinders 4–6) are corrected separately. |
+| **Wideband** | LSU 4.9 controller | Anywhere enabled in a rpm × load table, at **any** target AFR (including rich at full load) | PI controller on the AFR error against the AFR target table; applied to all six cylinders. |
+| **Both** | Wideband for control and logging; narrowbands as a cross-check | As wideband | If the wideband reading looks wrong (out of range, or disagrees with a switching narrowband at λ = 1), drop to narrowband mode or open loop and flag it. |
+
+Common rules: closed loop only when warm (CLT threshold), after the sensors are ready, not during
+acceleration enrichment, overrun fuel cut or rev limiting. Trims are limited (e.g. ±15 %); hitting the limit
+sets a warning. Long-term learning (stored trim tables) is a Phase 9 option. The tuner's auto-tune uses the
+wideband logs either way.
+
+**Mounting:** the narrowbands stay in their stock positions (one per bank). The wideband is best where
+both banks merge, so it sees all six cylinders. On one bank it only sees three.
 
 ## 4. Communication protocol (ECU ↔ tuner)
 
@@ -438,17 +501,19 @@ firmware Phases 1–5 progress on the dev board.
 | 6 | Fallback GUI | TunerStudio-compatible protocol + generated `.ini` |
 | 7 | Car | 1997 UK E36 323i, M52B25, MS41, single VANOS, ASC, 2 knock sensors |
 
-**Still open:**
-- Manual or automatic gearbox? (An automatic's gearbox computer expects data from the DME.)
-- Which ITB kit (or a home-made one)? Where do its injectors sit, and does it come with a TPS?
-- Keep the stock narrowband lambda sensors for closed-loop cruise, or rely on the wideband only?
+| 8 | Gearbox | Manual — no gearbox computer to talk to |
+| 9 | ITBs | Home-made from motorcycle throttle bodies; injectors in the ITBs, aimed at the intake valves (§3.8) |
+| 10 | Lambda | Both: two narrowbands (one per bank) and a wideband, mode selected in the tune (§3.9) |
+
+**Still open (not blocking the firmware):**
+- Which motorcycle the ITBs come from, throttle bore, and the injector part number (for flow and impedance).
 
 ## 8. Risks and things to verify early
 
 | Risk | Mitigation |
 |------|-----------|
 | **ASC** expects data from the DME (engine speed/torque, and it asks the DME to cut power when wheels spin) | Without those messages the ASC module will most likely show its warning light and switch traction control off, while ABS keeps working — confirm on the car with the stock DME unplugged. ITBs remove ASC's throttle intervention anyway. The board carries an optional CAN interface (MCP2515 on SPI) so the DME messages can be emulated later if wanted. |
-| Automatic gearbox (EGS) expects data from the DME | Only if the car is an automatic — same CAN option as ASC. |
+| Motorcycle injectors too small or low-impedance | Check part number and measure resistance before buying/building (§3.8); larger high-impedance injectors fit the same bosses on many bike ITBs. |
 | MAF pulsation / saturation with ITBs | Crank-synchronous MAF averaging, MAF trim table, Alpha-N blend, larger housing if it saturates (§3.8). |
 | Stock HFM transfer curve unknown | Start from published data for the HFM part number, correct with the wideband using the MAF-trim auto-tune. |
 | EWS immobiliser interaction with starter / DME | Verify the starter still works with the stock DME unplugged; the custom ECU itself ignores EWS. |
@@ -474,7 +539,7 @@ hardware/      KiCad project
 
 ## 10. Immediate next steps
 
-1. Answer the remaining questions in §7.
+1. When the ITB parts are chosen, record bike model, bore and injector data in [CAR.md](CAR.md).
 2. Buy the Phase 0/1 kit (shopping list in [CAR.md](CAR.md)): Arduino Mega, a second small Arduino, a USB
    logic analyser, a basic oscilloscope, a donor MS41 DME, and the E36 wiring diagrams (ETM).
 3. Phase 0: work through the [CAR.md](CAR.md) checklist on the car.
