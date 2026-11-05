@@ -22,7 +22,7 @@ None of them threaten the project; several change the design.
 | # | Brief says | Reality | Impact |
 |---|-----------|---------|--------|
 | 1 | Teeth pass every **277 µs** at 7,200 RPM | 7,200 RPM = 120 rev/s × 60 tooth positions = 7,200 teeth/s → **138.9 µs per tooth** (the 16.67 ms cycle figure is correct) | CPU budget per tooth is ~2,220 clock cycles, not ~4,400. Still comfortable (see §3.6). |
-| 2 | Crank ISR must take **< 1–2 µs** | ISR entry/exit alone on AVR with avr-gcc is ~1.5–3 µs. Realistic target: **≤ 10 µs** worst case. | Fine: 120 teeth × 10 µs = 1.2 ms per 16.67 ms cycle ≈ 7 % CPU. |
+| 2 | Crank ISR must take **< 1–2 µs** | ISR entry/exit alone on AVR with avr-gcc is ~1.5–3 µs. **Measured (Phase 2, simavr): 13.5 µs average, 15.8 µs worst case** for the complete decoder (gap detection, noise rejection, sync, cam phase). | Fine: ~10 % CPU at 7,200 RPM. A regression test fails above 17 µs. |
 | 3 | "High-priority" Input Capture interrupt | **AVR has no interrupt priorities and no nesting by default.** All ISRs are equal; a long ISR delays every other ISR. | Every ISR (UART, ADC, SPI, timers) must be short. Precision comes from hardware: Input Capture **latches the timestamp in hardware** regardless of ISR latency, and Output Compare **toggles the pin in hardware**. ISR latency only affects *arming* the next event, not when it fires. |
 | 4 | Crank ISR *only* logs a timestamp and counts teeth | Events must be scheduled relative to a recent tooth to stay accurate during acceleration, so the ISR also does a cheap table lookup and arms an Output Compare when "this tooth is the reference tooth for an event". | All heavy math stays in the main loop, which pre-computes `(reference_tooth, delay_ticks)` pairs; the ISR does only a compare + add + register write. |
 | 5 | Main loop writes pulse width to the timer registers | On AVR, all 16-bit timer registers share **one TEMP byte**. If the main loop and an ISR both access 16-bit timer registers, values get corrupted. Also, in Normal mode OCR writes take effect immediately, so a late write can miss and wait a full timer wrap. | **Only ISRs touch timer registers.** Main loop hands schedules to ISRs through a double-buffered struct. ISR checks "is the target time already passed or too close?" and fires immediately (Force Output Compare) or skips instead of waiting 262 ms with a coil dwelling. |
@@ -226,32 +226,43 @@ firmware/
   test/         host-side unit tests (decoder replay, interpolation, fuel math)
 ```
 
-### 3.2 Crank / cam decoding
+### 3.2 Crank / cam decoding (implemented in Phase 2: `firmware/src/decoder/`)
 
-**Input Capture ISR (ICP5, every tooth):**
+**Input Capture ISR (ICP5, every crank tooth):**
 
-1. Read `ICR5` (hardware-latched edge time).
-2. `gap = now - last`. If `gap > 1.5 × previous_gap` → this is the tooth after the missing gap → tooth index = 0, revolution toggles.
-3. Validate tooth count (must be 58 between gaps; otherwise lose sync and count the error).
-4. If cam sync is pending, sample cam state at the gap to set phase (0–360° vs 360–720°).
-5. Check the event table: for each output whose reference tooth == this tooth, arm its Output Compare (§3.3).
-6. Knock window: open/close the TPIC8101 integrator on window-start/end teeth (6° resolution is fine for windows).
-7. Store tooth time for the main loop and optional tooth logger.
+1. Read `ICR5` (hardware-latched edge time, 4 µs ticks).
+2. Reject edges that arrive impossibly early as noise: under ¼ of the previous interval always, and once
+   synced also under ⅝ of the tooth period (a running engine can't speed up that much in 6°).
+3. Gap test: interval > 1.5 × previous interval → this edge is tooth 0. The next tooth is compared against
+   the gap itself (comparing against the pre-gap tooth can lock up after a false gap).
+4. Count teeth: exactly 58 between gaps, otherwise sync is dropped and re-acquired.
+5. Cam phase at each gap (below). Phase 3 adds: arm Output Compares whose reference tooth this is (§3.3),
+   and Phase 5 the knock window open/close.
+6. Optional one-shot tooth logger (64 teeth) for the tuner.
 
-No divisions, no 32-bit multiplies, no floats in the ISR.
+No divisions, no floats in the ISR. RPM (one division) is computed in the main loop.
 
-**Sync state machine:** `NO_SYNC → CRANK_SYNC (360°, found gap) → FULL_SYNC (720°, cam phase known)`.
-- In CRANK_SYNC the engine already runs: **wasted spark** on companion pairs (1/6, 5/2, 3/4 — 360° apart
-  in this firing order) and **paired/batch injection**. This gives fast starts.
-- On FULL_SYNC switch to full sequential. Losing cam sync drops back to wasted-spark/batch, not to engine off.
+**Sync state machine:** `NONE → PENDING (first gap) → CRANK (next gap exactly 58 teeth later: 360° known)
+→ FULL (cam phase confirmed: 720° known)`.
+- Waiting for a second, correctly counted gap before claiming sync costs one revolution of cranking but
+  means a noise pulse can never make the engine fire at a wrong angle. Simulated worst case from rest:
+  FULL sync after 3 revolutions.
+- In CRANK the engine can already run: **wasted spark** on companion pairs (1/6, 5/2, 3/4 — 360° apart
+  in this firing order) and **paired injection**.
+- On FULL switch to full sequential. Cam faults drop back to CRANK (engine keeps running), never to off.
 
-**Cam pattern:** the decoder will support both a single cam pulse (edge counted relative to the gap) and a
-"half-moon" pattern (level sampled at the gap). Which one the M52 intake cam has — and how far single
-VANOS moves the edge relative to the gap — gets measured on the car with a scope in Phase 0. Sampling
-point must keep margin from the edge across the full VANOS range.
+**Cam pattern:** one rule covers both a single-pulse and a half-moon cam wheel, because both give one
+rising edge per 720°: the revolution that starts at the gap *after* the cam edge is rev 0. FULL needs two
+consecutive revolutions that alternate (cam / no cam); in FULL every revolution must keep alternating or it
+drops to CRANK. The cam edge must stay well away from the gap across the full VANOS range. The decoder
+reports where it sees the cam edge (`cam_pos`, in teeth) so this can be checked on the car.
 
 **TDC offset:** angle from the missing-tooth gap to cylinder 1 TDC is a calibration value, measured on the
 car and confirmed with a timing light (fixed-timing mode in the tuning software).
+
+**Verified (simulation):** steady 100–9,000 RPM (RPM within 0.02 %), starts from rest from every crank
+position, cranking with ±35 % compression ripple, 800→7,200 RPM in 2 s and 1,000↔7,000 RPM in 0.4 s,
+dropped tooth, noise spikes, missing/spurious cam edges, stall and restart. Worst-case ISR 15.8 µs.
 
 ### 3.3 Output scheduling (the hard part)
 
@@ -326,11 +337,11 @@ PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed
 
 | Item | Per engine cycle (16.67 ms) |
 |------|-----------------------------|
-| 120 crank ISRs × ≤ 10 µs | ≤ 1.2 ms |
+| 120 crank ISRs × 13.5 µs average (measured, Phase 2; scheduling adds a few µs in Phase 3) | ~1.6 ms |
 | 24 output-compare ISRs × ~3 µs | ~0.07 ms |
 | Knock window + ADC + UART ISRs | ~0.3 ms |
-| **Interrupt load** | **≈ 9 %** |
-| Main loop available | > 85 % |
+| **Interrupt load** | **≈ 12 %** (to be re-measured with Phase 3 outputs running) |
+| Main loop available | > 80 % |
 
 Main loop target: full fuel/ignition recompute for all six cylinders at ≥ once per revolution at redline (8.3 ms).
 Fixed-point math, no floats, 32-bit divides limited to once-per-revolution RPM calculation.
@@ -476,7 +487,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 |-------|------|-----------|
 | **0. Car reconnaissance** | Know exactly what's on the car | Every item in the [CAR.md](CAR.md) checklist filled in: sensor inventory confirmed, DME connector pinout from the ETM checked with a multimeter, crank/cam waveforms captured at cranking and idle (VR vs Hall, cam pattern, VANOS shift), injector and coil resistance measured, knock signals captured, starter-with-DME-unplugged test done |
 | **1. Foundations** ✅ (in simulation) | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 20 to 9,000 RPM. Verified in simavr; still to verify on real boards (see `firmware/README.md`) |
-| **2. Decoder** | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
+| **2. Decoder** ✅ (in simulation) | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
 | **3. Scheduler** | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
 | **4. Engine math + tuner MVP** | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tuner T1–T3: live gauges, edit tables, burn, save tune |
 | **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |

@@ -9,9 +9,17 @@
 #include "comms/crc32.h"
 #include "comms/frame.h"
 #include "config.h"
+#include "decoder/decoder.h"
 #include "status.h"
 
 realtime_t rt;
+
+/* Host stub for the AVR-only tooth log: a full capture. */
+uint8_t decoder_take_log(uint8_t *out)
+{
+    for (int i = 0; i < 256; i++) out[i] = (uint8_t)i;
+    return 64;
+}
 
 static int failures, checks;
 
@@ -116,8 +124,12 @@ static void test_commands(void)
     rt.adc[ADC_NUM_CH - 1] = 0x03FF;
     n = commands_handle((const uint8_t *)"A", 1, resp);
     CHECK(resp[0] == FRAME_RC_OK && n == 1 + sizeof(realtime_t));
-    CHECK(sizeof(realtime_t) == 32);
+    CHECK(sizeof(realtime_t) == 46);
     CHECK(resp[1] == 0x78 && resp[4] == 0x12);           /* little-endian */
+
+    n = commands_handle((const uint8_t *)"T", 1, resp);
+    CHECK(n == 258 && resp[0] == FRAME_RC_OK && resp[1] == 64 && resp[257] == 255);
+    CHECK(n <= FRAME_MAX_PAYLOAD);
 
     n = commands_handle((const uint8_t *)"z", 1, resp);
     CHECK(n == 1 && resp[0] == FRAME_RC_UNKNOWN);

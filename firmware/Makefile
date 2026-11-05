@@ -25,7 +25,7 @@ OBJCOPY := avr-objcopy
 SIZE    := avr-size
 
 BUILD   := build
-SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c)
+SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c)
 OBJ     := $(SRC:%.c=$(BUILD)/%.o)
 
 CFLAGS  := -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -std=gnu11 -g \
@@ -33,9 +33,12 @@ CFLAGS  := -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -std=gnu11 -g \
            -ffunction-sections -fdata-sections -Isrc
 LDFLAGS := -mmcu=$(MCU) -Wl,--gc-sections
 
-.PHONY: all flash test sim-test clean size
+.PHONY: all flash test sim-test sim-pty clean size
 
 all: $(BUILD)/ecu.hex size
+
+# The decoder ISR is on the critical path: optimise it for speed, not size.
+$(BUILD)/src/decoder/decoder.o: CFLAGS += -O2
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -55,23 +58,45 @@ flash: $(BUILD)/ecu.hex
 
 # ---- host unit tests -------------------------------------------------------
 HOST_SRC := test/test_main.c src/comms/crc32.c src/comms/frame.c src/comms/commands.c
+HOST_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Werror -Isrc -Itest -I../tools/stim
 
-$(BUILD)/host_tests: $(HOST_SRC) $(wildcard src/*.h src/comms/*.h test/*.h)
+$(BUILD)/host_tests: $(HOST_SRC) $(wildcard src/*.h src/comms/*.h src/decoder/*.h test/*.h)
 	@mkdir -p $(BUILD)
-	gcc -std=gnu11 -Wall -Wextra -Werror -Isrc -Itest $(HOST_SRC) -o $@
+	gcc $(HOST_CFLAGS) $(HOST_SRC) -o $@
 
-test: $(BUILD)/host_tests
+$(BUILD)/test_decoder: test/test_decoder.c $(wildcard src/decoder/*.h) ../tools/stim/pattern.h
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_decoder.c -lm -o $@
+
+test: $(BUILD)/host_tests $(BUILD)/test_decoder
 	./$(BUILD)/host_tests
+	./$(BUILD)/test_decoder
 
 # ---- simavr end-to-end test ------------------------------------------------
-$(BUILD)/sim_test: test/sim_test.c src/comms/crc32.c
+$(BUILD)/sim_test: test/sim_test.c src/comms/crc32.c ../tools/stim/pattern.h
 	@mkdir -p $(BUILD)
-	gcc -std=gnu11 -Wall -Wextra -Isrc -I/usr/include/simavr $^ -lsimavr -o $@
+	gcc -std=gnu11 -O2 -Wall -Wextra -Isrc -I../tools/stim -I/usr/include/simavr test/sim_test.c src/comms/crc32.c -lsimavr -lm -o $@
 
-sim-test: $(BUILD)/ecu.elf $(BUILD)/sim_test
-	./$(BUILD)/sim_test $(BUILD)/ecu.elf $(MCU)
+# The crank ISR (TIMER5_CAPT = __vector_46) address and size are passed in so
+# the test can time it.
+sim-test: $(BUILD)/ecu.elf $(BUILD)/ecu.sym $(BUILD)/sim_test
+	./$(BUILD)/sim_test $(BUILD)/ecu.elf $(MCU) $(BUILD)/ecu.sym
+
+$(BUILD)/ecu.sym: $(BUILD)/ecu.elf
+	avr-nm -S $< > $@
 
 clean:
 	rm -rf $(BUILD)
 
 -include $(OBJ:.o=.d)
+
+# ---- simulated ECU on a pseudo-terminal, for testing PC tools ---------------
+RPM     ?= 3000
+SECONDS ?= 20
+
+$(BUILD)/sim_pty: test/sim_pty.c ../tools/stim/pattern.h
+	@mkdir -p $(BUILD)
+	gcc -std=gnu11 -O2 -Wall -Wextra -I../tools/stim -I/usr/include/simavr test/sim_pty.c -lsimavrparts -lsimavr -lutil -lpthread -o $@
+
+sim-pty: $(BUILD)/ecu.elf $(BUILD)/sim_pty
+	./$(BUILD)/sim_pty $(BUILD)/ecu.elf $(RPM) $(SECONDS)

@@ -7,10 +7,14 @@
  * Handle one request payload; write the response payload (status byte first)
  * to resp, which has room for FRAME_MAX_PAYLOAD bytes. Returns its length.
  *
- * Phase 1 commands:
+ * Commands:
  *   'Q'  signature string     (tuner checks it matches its definition)
  *   'S'  version string       (human readable)
  *   'A'  realtime data        (realtime_t)
+ *   'T'  tooth log            [count u8][count x (interval u16 LE, pos, flags)]:
+ *                             teeth captured since the previous 'T' (max 64),
+ *                             oldest first, then a new capture starts.
+ *                             See decoder_core.h tooth_log_t.
  *
  * Page read/write/burn and the loggers arrive with the tune storage in
  * Phase 4, together with the generated TunerStudio .ini.

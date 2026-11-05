@@ -7,8 +7,8 @@
 
 /* Reported to the tuner. The signature changes whenever the tune/realtime
  * layout changes, so a tuner never writes to an ECU it does not understand. */
-#define ECU_SIGNATURE   "E36ECU-dev-p1"
-#define ECU_VERSION     "E36 ECU firmware 0.1.0 (phase 1: foundations)"
+#define ECU_SIGNATURE   "E36ECU-dev-p2"
+#define ECU_VERSION     "E36 ECU firmware 0.2.0 (phase 2: crank/cam decoder)"
 
 /* Number of ADC channels scanned continuously (ADC0..ADC9, see board.h). */
 #define ADC_NUM_CH      10
