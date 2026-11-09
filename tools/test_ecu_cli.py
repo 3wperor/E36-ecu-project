@@ -30,16 +30,34 @@ class FramingTest(unittest.TestCase):
             ecu_cli.read_frame(io.BytesIO(b"").read)
 
     def test_realtime_layout(self):
-        self.assertEqual(struct.calcsize(ecu_cli.RT_FORMAT), 46)   # sizeof(realtime_t)
-        raw = bytearray(46)
+        self.assertEqual(struct.calcsize(ecu_cli.RT_FORMAT), 50)   # sizeof(realtime_t)
+        raw = bytearray(50)
         struct.pack_into("<I", raw, 0, 1234)
         struct.pack_into("<H", raw, 32, 7200)
         raw[36] = 3
         raw[37] = 20
         struct.pack_into("<H", raw, 44, 2)
+        raw[39] = 3
+        struct.pack_into("<H", raw, 46, 5)
         rt = ecu_cli.parse_realtime(bytes(raw))
-        self.assertEqual((rt["uptime_ms"], rt["rpm"], rt["sync"], rt["cam_pos"], rt["cam_errors"]),
-                         (1234, 7200, 3, 20, 2))
+        self.assertEqual((rt["uptime_ms"], rt["rpm"], rt["sync"], rt["cam_pos"], rt["cam_errors"],
+                          rt["out_enable"], rt["sched_late"]), (1234, 7200, 3, 20, 2, 3, 5))
+
+    def test_cfg(self):
+        self.assertEqual(struct.calcsize(ecu_cli.CFG_FORMAT), 12)     # sizeof(sched_cfg_t)
+        # same bytes as the firmware host test (test_main.c): enable 3, advance 10.0°,
+        # dwell 3000 us, pw 2500 us, end of injection 380.0°, TDC offset 1.6°
+        raw = bytes([3, 0, 0x10, 0x00, 100, 0, 0xB8, 0x0B, 0xC4, 0x09, 0xD8, 0x0E])
+        c = ecu_cli.parse_cfg(raw)
+        self.assertEqual(c, {"enable": 3, "spare": 0, "tdc_offset": 16, "advance": 100,
+                             "dwell_us": 3000, "inj_pw_us": 2500, "inj_end": 3800})
+        self.assertEqual(ecu_cli.pack_cfg(c), raw)
+        c2 = ecu_cli.apply_settings(c, ["ign=off", "advance=-2.5", "dwell=2.8", "pw=4", "tdc=60", "eoi=400"])
+        self.assertEqual((c2["enable"], c2["advance"], c2["dwell_us"], c2["inj_pw_us"], c2["tdc_offset"],
+                          c2["inj_end"]), (2, -25, 2800, 4000, 600, 4000))
+        self.assertEqual(ecu_cli.apply_settings(c, ["off"])["enable"], 0)
+        with self.assertRaises(ValueError):
+            ecu_cli.apply_settings(c, ["boost=2"])
 
     def test_teeth(self):
         data = bytes([2]) + struct.pack("<HBB", 104, 0, 0x31) + struct.pack("<HBB", 35, 0x81, 0x32)

@@ -27,11 +27,13 @@ typedef struct __attribute__((packed)) {
     uint8_t  sync;              /* 36 0 none, 1 pending, 2 crank (360 deg), 3 full (720 deg) */
     uint8_t  cam_pos;           /* 37 tooth where the cam edge falls (+60 = rev 1), 255 = none */
     uint8_t  loss_reason;       /* 38 1 tooth count, 2 no gap, 3 engine stopped */
-    uint8_t  spare;             /* 39 */
+    uint8_t  out_enable;        /* 39 bit 0 ignition, bit 1 injection enabled */
     uint16_t sync_losses;       /* 40 */
     uint16_t noise_teeth;       /* 42 rejected spikes */
     uint16_t cam_errors;        /* 44 cam phase did not alternate */
-} realtime_t;                   /* 46 bytes */
+    uint16_t sched_late;        /* 46 output edges pulled forward (should stay ~0) */
+    uint16_t sched_overlap;     /* 48 starts skipped: output still on (duty too high) */
+} realtime_t;                   /* 50 bytes */
 
 extern realtime_t rt;
 

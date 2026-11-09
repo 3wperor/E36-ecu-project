@@ -45,6 +45,8 @@ uint8_t timers_check_sync(void)
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         t1 = TCNT1; t3 = TCNT3; t4 = TCNT4; t5 = TCNT5;
     }
-    /* Reads are a few CPU cycles apart; one tick is 64 cycles. */
-    return (uint16_t)(t3 - t1) <= 1 && (uint16_t)(t4 - t3) <= 1 && (uint16_t)(t5 - t4) <= 1;
+    /* Reads are a few CPU cycles apart and one tick is 64 cycles, so allow
+     * one tick either way (the simulator also starts the timers a few
+     * cycles apart; real silicon starts them on the same prescaler edge). */
+    return (uint16_t)(t3 - t1 + 1u) <= 2u && (uint16_t)(t4 - t3 + 1u) <= 2u && (uint16_t)(t5 - t4 + 1u) <= 2u;
 }

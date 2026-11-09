@@ -10,4 +10,4 @@ and a custom desktop tuning application.
 
 - Firmware build/test/flash and trigger simulator wiring: [firmware/README.md](firmware/README.md)
 
-Status: Phases 1–2 (firmware foundations, trigger simulator, crank/cam decoder) done in simulation.
+Status: Phases 1–3 (firmware foundations, trigger simulator, crank/cam decoder, injector/coil scheduling) done in simulation.

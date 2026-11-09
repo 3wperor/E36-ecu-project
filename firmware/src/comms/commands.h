@@ -15,6 +15,8 @@
  *                             teeth captured since the previous 'T' (max 64),
  *                             oldest first, then a new capture starts.
  *                             See decoder_core.h tooth_log_t.
+ *   'P'  + 12 bytes           set output test config (sched_cfg_t); RANGE_ERR if invalid
+ *   'p'  output test config   [12 bytes]
  *
  * Page read/write/burn and the loggers arrive with the tune storage in
  * Phase 4, together with the generated TunerStudio .ini.

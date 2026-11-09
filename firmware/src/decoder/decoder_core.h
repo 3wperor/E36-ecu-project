@@ -30,6 +30,14 @@
 
 #define DEC_INLINE static inline __attribute__((always_inline))
 
+/* Rarely taken paths (once per revolution). The AVR build defines this as a
+ * real function before including, so the crank ISR's register save covers
+ * only the per-tooth path; the cold function saves its own registers only
+ * when it runs. Host tests just inline it. */
+#ifndef DEC_COLD
+#define DEC_COLD DEC_INLINE
+#endif
+
 #define DEC_LAST_TOOTH     57u          /* physical teeth 0..57, then the gap */
 #define DEC_TICKS_PER_MIN  15000000UL   /* 60 s / 4 us */
 #define DEC_STALL_TICKS    50000u       /* 200 ms without a tooth = stopped */
@@ -69,7 +77,11 @@ typedef struct {
     uint8_t  has_interval;
     uint16_t last_time;
     uint16_t last_interval;     /* previous interval, for gap/noise tests (the gap itself after a gap) */
-    uint16_t tooth_period;      /* last normal (non-gap) tooth interval, for RPM and scheduling */
+    uint16_t tooth_period;      /* last normal (non-gap) tooth interval, for RPM */
+    uint16_t period4;           /* sum of the last 4 normal intervals: tooth period x 4,
+                                 * keeps the fraction a single 4 us-quantised interval loses */
+    uint16_t ring[4];
+    uint8_t  ring_i;
     uint32_t rev_acc;
     uint32_t rev_ticks;         /* duration of the last complete revolution */
 
@@ -143,7 +155,7 @@ DEC_INLINE void dec_log_start(decoder_t *d)
 }
 
 /* The edge that ends the gap = tooth 0 of a new revolution. */
-DEC_INLINE uint8_t dec_gap(decoder_t *d, uint16_t interval)
+DEC_COLD uint8_t dec_gap(decoder_t *d, uint16_t interval)
 {
     uint8_t ev = EV_TOOTH | EV_GAP;
     uint8_t count_ok = (d->tooth == DEC_LAST_TOOTH);
@@ -241,6 +253,9 @@ DEC_INLINE uint8_t dec_crank_edge(decoder_t *d, uint16_t t)
         d->has_interval = 1;
         d->last_interval = interval;
         d->tooth_period = interval;
+        uint16_t iv = interval > 16383u ? 16383u : interval;
+        d->ring[0] = d->ring[1] = d->ring[2] = d->ring[3] = iv;
+        d->period4 = (uint16_t)(iv * 4u);
         return 0;
     }
 
@@ -254,6 +269,12 @@ DEC_INLINE uint8_t dec_crank_edge(decoder_t *d, uint16_t t)
     }
     d->last_interval = interval;
     d->tooth_period = interval;
+    {
+        uint16_t iv = interval > 16383u ? 16383u : interval;   /* sum stays 16-bit */
+        d->period4 = (uint16_t)(d->period4 - d->ring[d->ring_i] + iv);
+        d->ring[d->ring_i] = iv;
+        d->ring_i = (uint8_t)((d->ring_i + 1u) & 3u);
+    }
 
     if (d->sync == SYNC_NONE) {
         dec_log(d, interval, 0);

@@ -1,5 +1,11 @@
 #include "decoder/decoder.h"
+
+/* Rare paths as real functions: keeps the crank ISR's register save small. */
+#define DEC_COLD   static __attribute__((noinline))
+#define SCHED_COLD static __attribute__((noinline))
+
 #include "decoder/decoder_core.h"
+#include "sched/sched_hw_avr.h"
 
 #include <avr/interrupt.h>
 #include <avr/io.h>
@@ -10,7 +16,12 @@ static decoder_t dec;
 
 ISR(TIMER5_CAPT_vect)
 {
-    dec_crank_edge(&dec, ICR5);
+    uint16_t icr = ICR5;
+    uint8_t ev = dec_crank_edge(&dec, icr);
+    sched_tooth(&sched, &dec, ev, icr);
+    if (ev & EV_SYNC_LOST) {
+        sched_cancel_pending(&sched);
+    }
 }
 
 ISR(TIMER4_CAPT_vect)
@@ -38,7 +49,9 @@ void decoder_poll(decoder_status_t *out)
     uint16_t last_interval;
 
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        dec_check_stall(&dec, TCNT5);
+        if (dec_check_stall(&dec, TCNT5)) {
+            sched_cancel_pending(&sched);
+        }
         out->sync = dec.sync;
         out->rev = dec.rev;
         out->cam_pos = dec.cam_pos;
@@ -48,7 +61,10 @@ void decoder_poll(decoder_status_t *out)
         out->cam_errors = dec.cam_errors;
         rev_ticks = dec.rev_ticks;
         last_interval = dec.has_interval ? dec.tooth_period : 0;
+        out->period4 = dec.has_interval ? dec.period4 : 0;
     }
+    out->tooth_period = last_interval;
+    out->rev_ticks = (out->sync >= SYNC_CRANK) ? rev_ticks : 0;
 
     /* Divisions outside the atomic block (~40 us each on AVR). */
     out->rpm = (out->sync >= SYNC_CRANK) ? dec_rpm(rev_ticks) : 0;

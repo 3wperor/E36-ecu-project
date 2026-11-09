@@ -25,7 +25,7 @@ OBJCOPY := avr-objcopy
 SIZE    := avr-size
 
 BUILD   := build
-SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c)
+SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c) $(wildcard src/sched/*.c)
 OBJ     := $(SRC:%.c=$(BUILD)/%.o)
 
 CFLAGS  := -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -std=gnu11 -g \
@@ -37,8 +37,10 @@ LDFLAGS := -mmcu=$(MCU) -Wl,--gc-sections
 
 all: $(BUILD)/ecu.hex size
 
-# The decoder ISR is on the critical path: optimise it for speed, not size.
+# The decoder and scheduler ISRs are on the critical path: optimise them
+# for speed, not size.
 $(BUILD)/src/decoder/decoder.o: CFLAGS += -O2
+$(BUILD)/src/sched/sched.o: CFLAGS += -O2
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -60,7 +62,7 @@ flash: $(BUILD)/ecu.hex
 HOST_SRC := test/test_main.c src/comms/crc32.c src/comms/frame.c src/comms/commands.c
 HOST_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Werror -Isrc -Itest -I../tools/stim
 
-$(BUILD)/host_tests: $(HOST_SRC) $(wildcard src/*.h src/comms/*.h src/decoder/*.h test/*.h)
+$(BUILD)/host_tests: $(HOST_SRC) $(wildcard src/*.h src/comms/*.h src/decoder/*.h src/sched/*.h test/*.h)
 	@mkdir -p $(BUILD)
 	gcc $(HOST_CFLAGS) $(HOST_SRC) -o $@
 
@@ -68,9 +70,14 @@ $(BUILD)/test_decoder: test/test_decoder.c $(wildcard src/decoder/*.h) ../tools/
 	@mkdir -p $(BUILD)
 	gcc $(HOST_CFLAGS) test/test_decoder.c -lm -o $@
 
-test: $(BUILD)/host_tests $(BUILD)/test_decoder
+$(BUILD)/test_sched: test/test_sched.c $(wildcard src/decoder/*.h src/sched/*.h) ../tools/stim/pattern.h
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_sched.c -lm -o $@
+
+test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched
 	./$(BUILD)/host_tests
 	./$(BUILD)/test_decoder
+	./$(BUILD)/test_sched
 
 # ---- simavr end-to-end test ------------------------------------------------
 $(BUILD)/sim_test: test/sim_test.c src/comms/crc32.c ../tools/stim/pattern.h

@@ -17,6 +17,9 @@ typedef struct {
     uint16_t sync_losses;
     uint16_t noise_teeth;
     uint16_t cam_errors;
+    uint16_t tooth_period;  /* ticks, 0 = unknown */
+    uint16_t period4;       /* last 4 tooth periods summed (ticks), 0 = unknown */
+    uint32_t rev_ticks;     /* last full revolution (ticks), 0 = unknown */
 } decoder_status_t;
 
 /* cam_enabled = 0 runs crank-only (never leaves CRANK sync). */

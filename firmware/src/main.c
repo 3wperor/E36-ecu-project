@@ -11,6 +11,7 @@
 #include "board.h"
 #include "comms/comms.h"
 #include "decoder/decoder.h"
+#include "sched/sched.h"
 #include "hal/adc.h"
 #include "hal/io.h"
 #include "hal/reset.h"
@@ -40,6 +41,13 @@ static void task_100hz(void)
     rt.noise_teeth = ds.noise_teeth;
     rt.cam_errors = ds.cam_errors;
 
+    sched_update(ds.sync, ds.period4, ds.rev_ticks);
+    sched_stats_t st;
+    sched_get_stats(&st);
+    rt.out_enable = st.enable;
+    rt.sched_late = st.late;
+    rt.sched_overlap = st.overlap;
+
     /* Phase 4+: fuel and ignition corrections, lambda control, idle. */
 }
 
@@ -66,6 +74,7 @@ int main(void)
 {
     io_init_safe();         /* outputs off before anything else runs */
     timers_init();
+    sched_init_hw();        /* compare units own the output pins, all OFF */
     adc_init();
     decoder_init(1);        /* cam enabled; becomes a tune setting in Phase 4 */
     uart_init();

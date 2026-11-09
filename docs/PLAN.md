@@ -236,7 +236,7 @@ firmware/
 3. Gap test: interval > 1.5 × previous interval → this edge is tooth 0. The next tooth is compared against
    the gap itself (comparing against the pre-gap tooth can lock up after a false gap).
 4. Count teeth: exactly 58 between gaps, otherwise sync is dropped and re-acquired.
-5. Cam phase at each gap (below). Phase 3 adds: arm Output Compares whose reference tooth this is (§3.3),
+5. Cam phase at each gap (below). Then arm the Output Compares whose reference tooth this is (§3.3),
    and Phase 5 the knock window open/close.
 6. Optional one-shot tooth logger (64 teeth) for the tuner.
 
@@ -264,28 +264,46 @@ car and confirmed with a timing light (fixed-timing mode in the tuning software)
 position, cranking with ±35 % compression ripple, 800→7,200 RPM in 2 s and 1,000↔7,000 RPM in 0.4 s,
 dropped tooth, noise spikes, missing/spurious cam edges, stall and restart. Worst-case ISR 15.8 µs.
 
-### 3.3 Output scheduling (the hard part)
+### 3.3 Output scheduling (implemented in Phase 3: `firmware/src/sched/`)
 
-**Main loop** (once per revolution or faster, per cylinder) computes:
-- Ignition: `spark_angle = TDC_cyl − advance`, `dwell_start_angle = spark_angle − dwell_time × degrees_per_µs`.
-- Injection: `end_of_injection_angle` from table, `start_angle = EOI − PW × degrees_per_µs`.
-- Converts each event angle into `(reference_tooth, delay_ticks)` where the reference tooth is the last
-  physical tooth before the event (taking the missing-tooth gap into account).
-- Writes the results into the *inactive* half of a double buffer and flips a flag (atomic single-byte write).
+**Main loop** (100 Hz) computes, per channel, a reference tooth and a delay in 1/256-tooth units:
+- Injectors: end of injection = TDC − EOI angle; start = end − pulse width (converted to an angle with the
+  last full-revolution time, which is far finer than a single 4 µs-quantised tooth).
+- Coils: the **spark** angle (TDC − advance) is the anchor. The start reference tooth is picked with margin
+  (dwell angle × 1.5 + 1 tooth before the spark); a second reference tooth just before the spark is used
+  for refinement (below).
+- Reference teeth are always physical teeth (the missing-tooth gap is skipped) at least ½ tooth before
+  the event, so the crank ISR's own latency never makes an event late.
+- Each channel takes a new schedule only **right after its own event** (with a "fires at most once per half
+  period" guard), so a change can never skip or double-fire a cylinder.
 
-**ISR side** (crank ISR at the reference tooth):
-- `OCRnx = ICR5 + delay_ticks`, compare mode = *set pin on match* (start dwell / open injector).
-- Guard: if the target is already in the past or within a few ticks of `TCNTn`, use Force Output Compare to
-  act now (or skip spark this cycle) — never let a compare wait for the next 262 ms wrap.
+**Crank ISR** (every tooth): one table lookup. On the ~15 % of teeth that carry events:
+- Injector: `OCR = ICR + delay`, compare mode "set pin on match".
+- Coil: `OCR = ICR + time to spark − dwell` with the latest speed, so dwell is right even under hard
+  acceleration. Delays scale with the sum of the last 4 tooth periods (keeps the fraction a single
+  4 µs-quantised tooth loses).
+- Spark refinement: if a coil is dwelling when its spark reference tooth arrives, the spark edge is re-timed
+  from that tooth (bounded to ±½ dwell).
 
-**Output Compare ISR** (on the start edge):
-- `OCRnx += duration_ticks` (dwell time or injector pulse width), compare mode = *clear pin on match*.
-- The closing edge is then also hardware-timed.
+**Output Compare ISR** (on the start edge): `OCR += duration`, compare mode "clear pin on match". Both
+edges are hardware-timed; ISR latency only moves when an edge is *armed*.
 
-**Safety:**
-- Every start edge always has its end edge armed in the same ISR → a coil can't be left dwelling.
-- Max-dwell clamp; dwell/injection disabled when RPM = 0 or sync is lost; fuel pump off 1 s after last tooth.
-- Injector pulses longer than the cycle (duty > ~85 %) are clamped and flagged.
+**Sync:** FULL (720°) → sequential. CRANK (360°) → every channel every revolution: wasted spark on the
+coils, injectors at half pulse width.
+
+**Safety (all tested):**
+- The OFF edge is armed in the same ISR that sees the ON edge; an edge too close to "now" is pulled forward
+  rather than missed (a missed compare would wait a 262 ms timer wrap with a coil dwelling).
+- Sync loss / stall: pending starts are cancelled; outputs already on finish their bounded pulse (cutting a
+  dwell short would fire the spark at an unknown angle).
+- Max dwell 8 ms and never more than half the period; injector duty capped at 90 %.
+- Outputs are **off at power-up** until enabled over the protocol; out-of-range settings are rejected.
+
+**Accuracy (simulation, 4 µs timer):** spark and injection angles within 0.25° up to 3,000 rpm and within
+2.5 timer ticks above that (≈ 0.4° at 7,200 rpm; events referenced across the missing-tooth gap are the
+worst case). Dwell and pulse width exact to a tick. Spark within 0.3° during a 1,000→7,000 rpm rev in 0.5 s.
+If finer resolution is ever wanted, the timers can run at 0.5 µs (prescaler /8) with software overflow
+extension.
 
 ### 3.4 Engine math (main loop, fixed-point integers)
 
@@ -337,14 +355,20 @@ PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed
 
 | Item | Per engine cycle (16.67 ms) |
 |------|-----------------------------|
-| 120 crank ISRs × 13.5 µs average (measured, Phase 2; scheduling adds a few µs in Phase 3) | ~1.6 ms |
-| 24 output-compare ISRs × ~3 µs | ~0.07 ms |
-| Knock window + ADC + UART ISRs | ~0.3 ms |
-| **Interrupt load** | **≈ 12 %** (to be re-measured with Phase 3 outputs running) |
-| Main loop available | > 80 % |
+| 116 crank ISRs: 20 µs on a plain tooth, up to 56 µs on a tooth that arms several outputs (measured, Phase 3) | ~2.8 ms |
+| 24 output-compare ISRs × 5.3 µs (measured) | ~0.13 ms |
+| Timer tick, ADC and UART ISRs | ~0.9 ms |
+| **Interrupt load, all 12 outputs running (measured in simavr)** | **23 %** |
+| Main loop available | ~77 % |
 
-Main loop target: full fuel/ignition recompute for all six cylinders at ≥ once per revolution at redline (8.3 ms).
-Fixed-point math, no floats, 32-bit divides limited to once-per-revolution RPM calculation.
+Each plain tooth spends about a third of its time saving and restoring registers (normal for C ISRs on
+AVR); the rare paths (gap, output arming) are separate functions so the plain path saves as few registers
+as possible. Knock (Phase 5) adds a little per firing event. Regression tests fail if the crank ISR average
+exceeds 25 µs or its worst case 60 µs.
+
+Main loop: the 12-channel schedule is recomputed at 100 Hz. Fixed-point math, no floats; 32-bit divides only a
+few per update (they cost ~40 µs each on AVR, so angle wrapping and degree conversion use add/subtract and
+multiply-shift instead).
 
 Memory (estimate): flash 30–50 KB of 128 KB; SRAM ~2 KB working tune + ~1 KB buffers + stack of 8 KB;
 EEPROM ~2–3 KB of 4 KB for tune pages + CRC. EEPROM is written only on "burn" (100k write endurance).
@@ -488,7 +512,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **0. Car reconnaissance** | Know exactly what's on the car | Every item in the [CAR.md](CAR.md) checklist filled in: sensor inventory confirmed, DME connector pinout from the ETM checked with a multimeter, crank/cam waveforms captured at cranking and idle (VR vs Hall, cam pattern, VANOS shift), injector and coil resistance measured, knock signals captured, starter-with-DME-unplugged test done |
 | **1. Foundations** ✅ (in simulation) | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 20 to 9,000 RPM. Verified in simavr; still to verify on real boards (see `firmware/README.md`) |
 | **2. Decoder** ✅ (in simulation) | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
-| **3. Scheduler** | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
+| **3. Scheduler** ✅ (in simulation) | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
 | **4. Engine math + tuner MVP** | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tuner T1–T3: live gauges, edit tables, burn, save tune |
 | **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |

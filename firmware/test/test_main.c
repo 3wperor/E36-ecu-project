@@ -10,9 +10,21 @@
 #include "comms/frame.h"
 #include "config.h"
 #include "decoder/decoder.h"
+#include "sched/sched.h"
 #include "status.h"
 
 realtime_t rt;
+
+/* Host stubs for the AVR-only output config: accept advance <= 60.0°. */
+static uint8_t stub_cfg[SCHED_CFG_SIZE];
+uint8_t sched_set_cfg(const uint8_t *raw12)
+{
+    int16_t adv = (int16_t)(raw12[4] | (raw12[5] << 8));
+    if (adv > 600) return 0;
+    memcpy(stub_cfg, raw12, SCHED_CFG_SIZE);
+    return 1;
+}
+void sched_get_cfg(uint8_t *raw12) { memcpy(raw12, stub_cfg, SCHED_CFG_SIZE); }
 
 /* Host stub for the AVR-only tooth log: a full capture. */
 uint8_t decoder_take_log(uint8_t *out)
@@ -124,12 +136,23 @@ static void test_commands(void)
     rt.adc[ADC_NUM_CH - 1] = 0x03FF;
     n = commands_handle((const uint8_t *)"A", 1, resp);
     CHECK(resp[0] == FRAME_RC_OK && n == 1 + sizeof(realtime_t));
-    CHECK(sizeof(realtime_t) == 46);
+    CHECK(sizeof(realtime_t) == 50);
     CHECK(resp[1] == 0x78 && resp[4] == 0x12);           /* little-endian */
 
     n = commands_handle((const uint8_t *)"T", 1, resp);
     CHECK(n == 258 && resp[0] == FRAME_RC_OK && resp[1] == 64 && resp[257] == 255);
     CHECK(n <= FRAME_MAX_PAYLOAD);
+
+    uint8_t setp[13] = {'P', 3, 0, 0x10, 0x00, 100, 0, 0xB8, 0x0B, 0xC4, 0x09, 0xD8, 0x0E};
+    n = commands_handle(setp, 13, resp);
+    CHECK(n == 1 && resp[0] == FRAME_RC_OK);
+    n = commands_handle((const uint8_t *)"p", 1, resp);
+    CHECK(n == 13 && resp[0] == FRAME_RC_OK && memcmp(&resp[1], &setp[1], 12) == 0);
+    setp[6] = 0x10;                                      /* advance 419.6°: invalid */
+    n = commands_handle(setp, 13, resp);
+    CHECK(n == 1 && resp[0] == FRAME_RC_RANGE_ERR);
+    n = commands_handle(setp, 5, resp);                  /* wrong length */
+    CHECK(n == 1 && resp[0] == FRAME_RC_RANGE_ERR);
 
     n = commands_handle((const uint8_t *)"z", 1, resp);
     CHECK(n == 1 && resp[0] == FRAME_RC_UNKNOWN);

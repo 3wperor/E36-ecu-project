@@ -3,7 +3,7 @@
 Bare-metal C for the ATmega1280 (also builds for the pin-compatible ATmega2560).
 No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 
-## Status — Phases 1 and 2 done in simulation
+## Status — Phases 1, 2 and 3 done in simulation
 
 | Part | State |
 |------|-------|
@@ -12,13 +12,15 @@ No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 | UART0 interrupt ring buffers, 115200 baud | done |
 | Background ADC scan of 10 channels (~960 Hz each) | done |
 | Watchdog (60 ms) + reset-cause capture | done |
-| TunerStudio-style framing (length + payload + CRC32), commands `Q` `S` `A` | done |
+| TunerStudio-style framing (length + payload + CRC32), commands `Q` `S` `A` `T` `P` `p` | done |
 | Cooperative main loop: 1 kHz / 100 Hz / 10 Hz / 1 Hz tasks | done (tasks are placeholders) |
 | Crank/cam decoder: 60-2 gap sync, cam phase (single pulse or half-moon), RPM, noise rejection, stall detection | done — see below |
 | Tooth logger (`T` command, one-shot 64-tooth capture) | done |
-| Injector/coil scheduling | Phase 3 |
+| Injector/coil scheduling: 6 injectors + 6 coils on output-compare hardware, sequential / wasted spark, spark refinement, safety rules | done — see below |
+| Output test settings (`P`/`p`): advance, dwell, pulse width, end of injection, TDC offset; **off at power-up** | done (Phase 4 replaces them with tune tables) |
+| Fuel/ignition tables, sensors, tune storage | Phase 4 |
 
-Current size: ~4.7 KB flash, ~1.3 KB RAM.
+Current size: ~11.5 KB flash (9 %), ~2.2 KB RAM (27 %).
 
 ### Decoder test results
 
@@ -37,9 +39,34 @@ Current size: ~4.7 KB flash, ~1.3 KB RAM.
 | Spurious or vanished cam edge | Drops to CRANK, recovers with the correct phase |
 | Engine stops, restarts | Detected within 200 ms, re-syncs |
 
-`make sim-test` runs the real firmware in simavr with a simulated engine on the ICP pins: full sync and
-1,000 / 7,200 RPM read back over the serial protocol, tooth log, stall detection, and the crank ISR timed
-at **13.5 µs average / 15.8 µs worst case** (fails above 17 µs).
+### Scheduler test results
+
+`make test` also runs the decoder **and** scheduler against a simulated engine and a model of the AVR
+output-compare hardware (pins switch at exact ticks, ISRs run with realistic latency). Every pulse is
+converted back to a true crank angle:
+
+| Scenario | Result |
+|----------|--------|
+| Sequential at 200 … 9,000 rpm | Every cylinder exactly once per cycle, firing order 1-5-3-6-2-4; spark/injection angle within 0.25° (≤ 3,000 rpm) and 2.5 timer ticks above (≈ 0.4° at 7,200); dwell and pulse width exact |
+| Cam-less (CRANK) sync | Wasted spark every 360°, injectors every revolution at half pulse width |
+| Start from rest | Nothing fires before sync; never two sparks within 180° |
+| 1,000 → 7,000 rpm in 0.5 s | Spark within 0.3°, dwell within 8 %, no missed or extra events |
+| Big advance / end-of-injection changes while running | No missed or double events |
+| Sync loss (dropped tooth) | No new outputs until re-sync; running dwells finish normally |
+| Engine stops | All channels idle, nothing left dwelling |
+| Outputs disabled while running | Stop within one cycle |
+| 30 ms pulse requested at 7,200 rpm / 8 ms dwell at 9,000 rpm | Capped at 90 % duty / half the period |
+
+`make sim-test` runs the real firmware in simavr with a simulated engine on the input-capture pins:
+
+- full sync and 1,000 / 7,200 rpm read back over the serial protocol, tooth log, stall detection;
+- outputs enabled over the protocol; at 7,200 rpm the injector/coil schedule is checked from the
+  output-compare register writes: 396 sparks + 396 injections in 1.1 s, every dwell 3.0 ms, every pulse
+  2.5 ms, firing order correct, sparks 120° apart within 1.6 ticks, no late edges;
+- every ISR timed: crank ISR **20 µs on a plain tooth, 24 µs average, 56 µs worst** (when several outputs
+  are armed on one tooth); output-compare ISRs 5–6 µs; **total interrupt load 23 % at 7,200 rpm with all
+  12 outputs running**. The test fails if the crank ISR averages over 25 µs or exceeds 60 µs;
+- after the engine stops, all 12 channels are idle (read from the firmware's RAM).
 
 ## Build, test, flash
 
@@ -87,6 +114,26 @@ Serial console at 115200 baud: `r3000` (set rpm, `r0` stops), `s800,7200,5000`
 (sweep 800→7200 rpm over 5 s), `c0|c1|c2` (cam none / single pulse / half-moon),
 `o40` (cam position in 3° steps), `d` (drop one tooth), `?` (status).
 
+### Bench-testing the outputs (Phase 3)
+
+With the trigger simulator driving the Mega, a logic analyser on the output pins shows the schedule:
+
+| Channel | Mega pins |
+|---------|-----------|
+| Injectors 1–6 | D11, D12, D13, D5, D2, D3 |
+| Coils 1–6 | D6, D7, D8, D46, D45, D44 |
+
+```sh
+python3 tools/ecu_cli.py /dev/ttyACM0 set ign=on inj=on advance=10 dwell=3 pw=2.5 tdc=60 eoi=380
+python3 tools/ecu_cli.py /dev/ttyACM0 watch
+python3 tools/ecu_cli.py /dev/ttyACM0 set off
+```
+
+Outputs are off at every power-up and must be enabled like this. **Bench only:** do not connect real
+coils or injectors to the Mega's pins (they are 5 V logic outputs, and with real drivers attached `set`
+fires them). The `tdc` value is the calibration found on the car with a timing light; any value works on
+the bench.
+
 ### Trying the PC tools without hardware
 
 ```sh
@@ -96,7 +143,7 @@ python3 tools/ecu_cli.py /tmp/simavr-uart0 watch
 
 ## Testing notes
 
-- Portable modules (`comms/`, `decoder/`, later the engine maths) are unit-tested on the PC.
+- Portable modules (`comms/`, `decoder/`, `sched/`, later the engine maths) are unit-tested on the PC.
 - simavr 1.6 does **not** model output-compare pins correctly in Normal timer mode
   (it also drives them at overflow). Tests that check hardware-timed outputs
   therefore capture the firmware's `TCCRnA`/`OCRnx` register writes, which define
