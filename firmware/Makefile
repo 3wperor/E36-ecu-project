@@ -27,7 +27,7 @@ SIZE    := avr-size
 
 BUILD   := build
 SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c) \
-           $(wildcard src/sched/*.c) $(wildcard src/tune/*.c) $(wildcard src/engine/*.c) \
+           $(wildcard src/sched/*.c) $(wildcard src/tune/*.c) $(wildcard src/engine/*.c) $(wildcard src/knock/*.c) \
            src/generated/tune_defaults.c
 OBJ     := $(SRC:%.c=$(BUILD)/%.o)
 
@@ -92,13 +92,18 @@ $(BUILD)/test_engine: test/test_engine.c src/generated/tune_defaults.c $(wildcar
 	@mkdir -p $(BUILD)
 	gcc $(HOST_CFLAGS) test/test_engine.c src/generated/tune_defaults.c -lm -o $@
 
-test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/test_storage $(BUILD)/test_engine
+$(BUILD)/test_knock: test/test_knock.c src/generated/tune_defaults.c $(wildcard src/knock/*.h src/generated/*.h)
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_knock.c src/generated/tune_defaults.c -o $@
+
+test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/test_storage $(BUILD)/test_engine $(BUILD)/test_knock
 	python3 ../tools/codegen/gen.py --check
 	./$(BUILD)/host_tests
 	./$(BUILD)/test_decoder
 	./$(BUILD)/test_sched
 	./$(BUILD)/test_storage
 	./$(BUILD)/test_engine
+	./$(BUILD)/test_knock
 	cd .. && python3 -m unittest -q tools/codegen/test_gen.py tools/test_ecu_cli.py
 	cd ../tuner && QT_QPA_PLATFORM=offscreen python3 -m unittest -q tests.test_core tests.test_gui
 

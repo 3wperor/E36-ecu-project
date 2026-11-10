@@ -46,6 +46,19 @@ class RealtimeTest(unittest.TestCase):
         self.assertIn("7200 rpm", ecu_cli.describe_realtime(rt))
 
 
+class KnockViewTest(unittest.TestCase):
+    def test_knock_view(self):
+        raw = bytearray(ecu_cli.DEF["realtime_size"])
+        off = lambda n: ecu_cli.channel(n)["offset"]
+        struct.pack_into("<H", raw, off("knockLevel") + 2 * 2, 300)     # cylinder 3
+        struct.pack_into("<H", raw, off("knockNoise") + 2 * 2, 120)
+        raw[off("knockRetard") + 2] = 25                                  # 2.5 deg
+        raw[off("knockState")] = 0x07
+        text = ecu_cli.describe_knock(ecu_cli.parse_realtime(bytes(raw)))
+        self.assertIn("enabled active KNOCK", text)
+        self.assertRegex(text, r"\n\s+3\s+300\s+120\s+2\.50\s+2\.5°")
+
+
 class TuneFieldTest(unittest.TestCase):
     def page(self, name):
         p, f = ecu_cli.find_field(name)

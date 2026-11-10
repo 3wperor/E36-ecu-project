@@ -49,9 +49,14 @@ typedef struct __attribute__((packed)) {
     int16_t advance;                  /*  87 deg x0.1 */
     uint16_t dwellUs;                 /*  89 ms x0.001 */
     uint16_t eoi;                     /*  91 deg x0.1 */
+    uint16_t knockLevel[6];           /*  93 adc */
+    uint16_t knockNoise[6];           /* 105 adc */
+    uint8_t knockRetard[6];           /* 117 deg x0.1 */
+    uint16_t knockCount;              /* 123  */
+    uint8_t knockState;               /* 125  */
 } realtime_t;
 
-#define REALTIME_SIZE 93u
+#define REALTIME_SIZE 126u
 _Static_assert(sizeof(realtime_t) == REALTIME_SIZE, "realtime layout");
 
 #endif

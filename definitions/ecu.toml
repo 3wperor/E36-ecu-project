@@ -16,8 +16,8 @@
 # Injector flow, MAF curve and dead times must be set for the real parts.
 
 [meta]
-signature = "E36ECU-dev-p4"
-version = "E36 ECU firmware 0.4.0 (phase 4: engine maths + tune storage)"
+signature = "E36ECU-dev-p5"
+version = "E36 ECU firmware 0.5.0 (phase 5: knock control)"
 
 # ============================================================== page 0: settings
 [[pages]]
@@ -450,6 +450,183 @@ max = 110
 default = 101
 help = "Barometric pressure for the Alpha-N air density."
 
+# ---- knock control (Phase 5)
+[[pages.fields]]
+name = "knockEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 0
+help = "Knock control. Needs the TPIC8101 knock chip; leave off until the chip settings are verified on the bench."
+
+[[pages.fields]]
+name = "knockWinStart"
+type = "U08"
+units = "deg ATDC"
+min = 0
+max = 60
+default = 10
+help = "Knock listening window start, degrees after each cylinder's compression TDC."
+
+[[pages.fields]]
+name = "knockWinLen"
+type = "U08"
+units = "deg"
+min = 6
+max = 96
+default = 60
+help = "Knock window length (max 96 deg: firings are 120 deg apart and the chip is read and switched to the next sensor in between)."
+
+[[pages.fields]]
+name = "knockThrRpm"
+type = "U08"
+shape = [6]
+units = "rpm"
+scale = 100
+min = 0
+max = 9000
+default = [1000, 2000, 3000, 4000, 5500, 7000]
+
+[[pages.fields]]
+name = "knockThr"
+type = "U08"
+shape = [6]
+units = "x noise"
+scale = 0.1
+min = 1.1
+max = 10
+digits = 1
+default = [2.5, 2.5, 2.2, 2.0, 2.0, 2.0]
+help = "Knock when the window level exceeds this many times the cylinder's learned background noise."
+
+[[pages.fields]]
+name = "knockStep"
+type = "U08"
+units = "deg"
+scale = 0.1
+min = 0
+max = 10
+digits = 1
+default = 2.0
+help = "Timing removed from a cylinder per knock event (twice this for heavy knock)."
+
+[[pages.fields]]
+name = "knockMaxRetard"
+type = "U08"
+units = "deg"
+scale = 0.1
+min = 0
+max = 20
+digits = 1
+default = 10.0
+
+[[pages.fields]]
+name = "knockRecover"
+type = "U08"
+units = "deg/s"
+scale = 0.1
+min = 0
+max = 10
+digits = 1
+default = 1.0
+help = "How fast removed timing is given back when there is no knock."
+
+[[pages.fields]]
+name = "knockMinRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 1500
+
+[[pages.fields]]
+name = "knockMaxRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 7200
+
+[[pages.fields]]
+name = "knockMinLoad"
+type = "U16"
+units = "mg"
+min = 0
+max = 1000
+default = 200
+help = "Knock control only above this air mass per cylinder."
+
+[[pages.fields]]
+name = "knockMinClt"
+type = "U08"
+units = "C"
+translate = -40
+min = -40
+max = 120
+default = 60
+
+[[pages.fields]]
+name = "knockLearn"
+type = "U08"
+units = "1/2^n"
+min = 1
+max = 8
+default = 4
+help = "Background noise learning speed: each window moves the noise 1/2^n of the way (4 = 1/16)."
+
+[[pages.fields]]
+name = "knockFaultRetard"
+type = "U08"
+units = "deg"
+scale = 0.1
+min = 0
+max = 15
+digits = 1
+default = 3.0
+help = "Timing removed from every cylinder while the knock chip reports nonsense (0 or full scale)."
+
+[[pages.fields]]
+name = "knockPrescaler"
+type = "U08"
+min = 0
+max = 31
+default = 6
+help = "TPIC8101 prescaler code for its clock input (datasheet table; 6 is commonly used for 8 MHz). VERIFY on the bench."
+
+[[pages.fields]]
+name = "knockBand"
+type = "U08"
+min = 0
+max = 63
+default = 42
+help = "TPIC8101 band-pass code (datasheet table, 1.2-20 kHz). PLACEHOLDER: pick the code nearest the engine's knock frequency (about 6.7 kHz for an 84 mm bore) on the bench."
+
+[[pages.fields]]
+name = "knockGain"
+type = "U08"
+min = 0
+max = 63
+default = 32
+help = "TPIC8101 gain code (datasheet table). Set on the bench so normal noise reads well below full scale."
+
+[[pages.fields]]
+name = "knockIntTime"
+type = "U08"
+min = 0
+max = 31
+default = 16
+help = "TPIC8101 integrator time constant code (datasheet table)."
+
+[[pages.fields]]
+name = "knockReadOrder"
+type = "U08"
+bits = [0, 0]
+options = ["MSB first (D9-D2, D1-D0)", "LSB first (D7-D0, D9-D8)"]
+default = 0
+help = "How the chip returns its 10-bit result over two SPI bytes. VERIFY on the bench: the right choice gives a steady low noise level that rises with engine speed."
+
 # ============================================================== page 1: tables
 [[pages]]
 id = 1
@@ -846,6 +1023,42 @@ units = "deg"
 scale = 0.1
 digits = 1
 
+[[channels]]
+name = "knockLevel"
+type = "U16"
+shape = [6]
+names = ["knockLevel1", "knockLevel2", "knockLevel3", "knockLevel4", "knockLevel5", "knockLevel6"]
+units = "adc"
+log = true
+
+[[channels]]
+name = "knockNoise"
+type = "U16"
+shape = [6]
+names = ["knockNoise1", "knockNoise2", "knockNoise3", "knockNoise4", "knockNoise5", "knockNoise6"]
+units = "adc"
+
+[[channels]]
+name = "knockRetard"
+type = "U08"
+shape = [6]
+names = ["knockRetard1", "knockRetard2", "knockRetard3", "knockRetard4", "knockRetard5", "knockRetard6"]
+units = "deg"
+scale = 0.1
+digits = 1
+log = true
+
+[[channels]]
+name = "knockCount"
+type = "U16"
+log = true
+
+[[channels]]
+name = "knockState"
+type = "U08"
+help = "bit 0 enabled, 1 active (conditions met), 2 knock in the last 0.5 s, 3 chip fault"
+log = true
+
 # ============================================================== TunerStudio UI
 [[dialogs]]
 name = "engineDlg"
@@ -876,6 +1089,25 @@ name = "sensorDlg"
 title = "Sensors"
 menu = "Sensors"
 fields = ["tpsCount", "tps1Min", "tps1Max", "tps2Min", "tps2Max", "vbatScale", "afrAt0V", "afrAt5V", "baro"]
+
+[[dialogs]]
+name = "knockDlg"
+title = "Knock control"
+menu = "Ignition"
+fields = ["knockEnable", "knockWinStart", "knockWinLen", "knockStep", "knockMaxRetard", "knockRecover", "knockMinRpm", "knockMaxRpm", "knockMinLoad", "knockMinClt", "knockLearn", "knockFaultRetard"]
+
+[[dialogs]]
+name = "knockChipDlg"
+title = "Knock chip (TPIC8101)"
+menu = "Ignition"
+fields = ["knockPrescaler", "knockBand", "knockGain", "knockIntTime", "knockReadOrder"]
+
+[[curves]]
+name = "knockThrCurve"
+title = "Knock threshold"
+menu = "Ignition"
+x = "knockThrRpm"
+y = "knockThr"
 
 [[curves]]
 name = "injDeadCurve"

@@ -4,13 +4,13 @@
 
 #include <stdint.h>
 
-#define ECU_SIGNATURE    "E36ECU-dev-p4"
-#define ECU_VERSION      "E36 ECU firmware 0.4.0 (phase 4: engine maths + tune storage)"
+#define ECU_SIGNATURE    "E36ECU-dev-p5"
+#define ECU_VERSION      "E36 ECU firmware 0.5.0 (phase 5: knock control)"
 
 #define TUNE_PAGES       2u
-#define TUNE_LAYOUT_HASH 0x756EC576UL
+#define TUNE_LAYOUT_HASH 0x758548E6UL
 
-#define TUNE_PAGE0_SIZE 226u   /* settings */
+#define TUNE_PAGE0_SIZE 256u   /* settings */
 #define TUNE_PAGE1_SIZE 1432u   /* tables */
 
 extern uint8_t tune_page0[TUNE_PAGE0_SIZE];
@@ -198,6 +198,67 @@ static inline uint8_t tu_afrAt5V(void) { return tune_page0[224]; }
 /* baro: U08 kPa, shown = raw */
 #define TU_BARO_OFF 225u
 static inline uint8_t tu_baro(void) { return tune_page0[225]; }
+/* knockEnable: U08 , shown = raw */
+#define TU_KNOCK_ENABLE_OFF 226u
+static inline uint8_t tu_knockEnable(void) { return (uint8_t)((tune_page0[226] >> 0) & 1u); }
+/* knockWinStart: U08 deg ATDC, shown = raw */
+#define TU_KNOCK_WIN_START_OFF 227u
+static inline uint8_t tu_knockWinStart(void) { return tune_page0[227]; }
+/* knockWinLen: U08 deg, shown = raw */
+#define TU_KNOCK_WIN_LEN_OFF 228u
+static inline uint8_t tu_knockWinLen(void) { return tune_page0[228]; }
+/* knockThrRpm: U08[6] rpm, shown = (raw + 0) * 100 */
+#define TU_KNOCK_THR_RPM_OFF 229u
+#define TU_KNOCK_THR_RPM_N 6u
+static inline uint8_t tu_knockThrRpm(uint16_t i) { return tune_page0[229u + i]; }
+static inline const uint8_t *tu_knockThrRpm_ptr(void) { return &tune_page0[229]; }
+/* knockThr: U08[6] x noise, shown = (raw + 0) * 0.1 */
+#define TU_KNOCK_THR_OFF 235u
+#define TU_KNOCK_THR_N 6u
+static inline uint8_t tu_knockThr(uint16_t i) { return tune_page0[235u + i]; }
+static inline const uint8_t *tu_knockThr_ptr(void) { return &tune_page0[235]; }
+/* knockStep: U08 deg, shown = (raw + 0) * 0.1 */
+#define TU_KNOCK_STEP_OFF 241u
+static inline uint8_t tu_knockStep(void) { return tune_page0[241]; }
+/* knockMaxRetard: U08 deg, shown = (raw + 0) * 0.1 */
+#define TU_KNOCK_MAX_RETARD_OFF 242u
+static inline uint8_t tu_knockMaxRetard(void) { return tune_page0[242]; }
+/* knockRecover: U08 deg/s, shown = (raw + 0) * 0.1 */
+#define TU_KNOCK_RECOVER_OFF 243u
+static inline uint8_t tu_knockRecover(void) { return tune_page0[243]; }
+/* knockMinRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_KNOCK_MIN_RPM_OFF 244u
+static inline uint8_t tu_knockMinRpm(void) { return tune_page0[244]; }
+/* knockMaxRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_KNOCK_MAX_RPM_OFF 245u
+static inline uint8_t tu_knockMaxRpm(void) { return tune_page0[245]; }
+/* knockMinLoad: U16 mg, shown = raw */
+#define TU_KNOCK_MIN_LOAD_OFF 246u
+static inline uint16_t tu_knockMinLoad(void) { return tune_rd16(&tune_page0[246]); }
+/* knockMinClt: U08 C, shown = (raw - 40) * 1 */
+#define TU_KNOCK_MIN_CLT_OFF 248u
+static inline uint8_t tu_knockMinClt(void) { return tune_page0[248]; }
+/* knockLearn: U08 1/2^n, shown = raw */
+#define TU_KNOCK_LEARN_OFF 249u
+static inline uint8_t tu_knockLearn(void) { return tune_page0[249]; }
+/* knockFaultRetard: U08 deg, shown = (raw + 0) * 0.1 */
+#define TU_KNOCK_FAULT_RETARD_OFF 250u
+static inline uint8_t tu_knockFaultRetard(void) { return tune_page0[250]; }
+/* knockPrescaler: U08 , shown = raw */
+#define TU_KNOCK_PRESCALER_OFF 251u
+static inline uint8_t tu_knockPrescaler(void) { return tune_page0[251]; }
+/* knockBand: U08 , shown = raw */
+#define TU_KNOCK_BAND_OFF 252u
+static inline uint8_t tu_knockBand(void) { return tune_page0[252]; }
+/* knockGain: U08 , shown = raw */
+#define TU_KNOCK_GAIN_OFF 253u
+static inline uint8_t tu_knockGain(void) { return tune_page0[253]; }
+/* knockIntTime: U08 , shown = raw */
+#define TU_KNOCK_INT_TIME_OFF 254u
+static inline uint8_t tu_knockIntTime(void) { return tune_page0[254]; }
+/* knockReadOrder: U08 , shown = raw */
+#define TU_KNOCK_READ_ORDER_OFF 255u
+static inline uint8_t tu_knockReadOrder(void) { return (uint8_t)((tune_page0[255] >> 0) & 1u); }
 
 /* ---- page 1: tables ---- */
 /* rpmBins: U08[16] rpm, shown = (raw + 0) * 100 */

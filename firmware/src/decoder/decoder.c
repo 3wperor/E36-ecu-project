@@ -6,6 +6,7 @@
 
 #include "decoder/decoder_core.h"
 #include "sched/sched_hw_avr.h"
+#include "knock/knock.h"
 
 #include <avr/interrupt.h>
 #include <avr/io.h>
@@ -19,6 +20,11 @@ ISR(TIMER5_CAPT_vect)
     uint16_t icr = ICR5;
     uint8_t ev = dec_crank_edge(&dec, icr);
     sched_tooth(&sched, &dec, ev, icr);
+    if (dec.sync == SYNC_FULL) {
+        if (ev & EV_TOOTH) knock_tooth((uint8_t)(dec.tooth + (dec.rev ? 60u : 0u)));
+    } else if (ev & (EV_SYNC_LOST | EV_CAM_ERR)) {
+        knock_stop();
+    }
     if (ev & EV_SYNC_LOST) {
         sched_cancel_pending(&sched);
     }
@@ -51,6 +57,7 @@ void decoder_poll(decoder_status_t *out)
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         if (dec_check_stall(&dec, TCNT5)) {
             sched_cancel_pending(&sched);
+            knock_stop();
         }
         out->sync = dec.sync;
         out->rev = dec.rev;

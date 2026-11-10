@@ -303,12 +303,12 @@ def ini_field(f):
     units = f.get("units", "")
     if "bits" in f:
         opts = ", ".join(f'"{o}"' for o in f["options"])
-        return f"{f['name']:<16}= bits,   {f['type']}, {f['offset']}, [{f['bits'][0]}:{f['bits'][1]}], {opts}"
+        return f"{f['name']:<15} = bits,   {f['type']}, {f['offset']}, [{f['bits'][0]}:{f['bits'][1]}], {opts}"
     if "shape" not in f:
-        return (f"{f['name']:<16}= scalar, {f['type']}, {f['offset']}, \"{units}\", {fmt_num(scale)}, "
+        return (f"{f['name']:<15} = scalar, {f['type']}, {f['offset']}, \"{units}\", {fmt_num(scale)}, "
                 f"{fmt_num(tr)}, {fmt_num(lo)}, {fmt_num(hi)}, {digits}")
     shape = "x".join(str(s) for s in f["shape"])
-    return (f"{f['name']:<16}= array,  {f['type']}, {f['offset']}, [{shape}], \"{units}\", {fmt_num(scale)}, "
+    return (f"{f['name']:<15} = array,  {f['type']}, {f['offset']}, [{shape}], \"{units}\", {fmt_num(scale)}, "
             f"{fmt_num(tr)}, {fmt_num(lo)}, {fmt_num(hi)}, {digits}")
 
 
@@ -371,7 +371,7 @@ def gen_ini(d, pages, fields):
         size = TYPES[c["type"]][0]
         names = c.get("names") or [c["name"]]
         for k, n in enumerate(names):
-            L.append(f"   {n:<16}= scalar, {c['type']}, {c['offset'] + k * size}, \"{c.get('units', '')}\", "
+            L.append(f"   {n:<15} = scalar, {c['type']}, {c['offset'] + k * size}, \"{c.get('units', '')}\", "
                      f"{fmt_num(c.get('scale', 1))}, {fmt_num(c.get('translate', 0))}")
     L += ["   running         = bits, U08, " + str([c for c in d["channels"] if c["name"] == "engine"][0]["offset"]) + ", [0:0]",
           "   time            = { timeNow }", ""]

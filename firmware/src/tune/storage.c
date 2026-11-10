@@ -12,23 +12,15 @@ static inline void stor_ee_write(uint16_t a, uint8_t v) { eeprom_write_byte((uin
 static inline uint8_t stor_ee_ready(void) { return eeprom_is_ready() ? 1 : 0; }
 
 #include "tune/storage_core.h"
+#include "tune/storage_map.h"
 
-/* EEPROM map (4 KB): page 0 slots at 0 and 256, page 1 slots at 512 and 2048. */
-#define P0_A 0u
-#define P0_B 256u
-#define P1_A 512u
-#define P1_B 2048u
-_Static_assert(STOR_HDR + TUNE_PAGE0_SIZE <= P0_B - P0_A, "page 0 slot too small");
-_Static_assert(STOR_HDR + TUNE_PAGE1_SIZE <= P1_B - P1_A, "page 1 slot too small");
-_Static_assert(P1_B + STOR_HDR + TUNE_PAGE1_SIZE <= 4096u, "EEPROM full");
-_Static_assert(TUNE_PAGES == 2, "update the EEPROM map");
 
 static storage_t st;
 
 void tune_init(void)
 {
-    st.page[0] = (stor_page_t){ tune_page0, tune_default_page0, TUNE_PAGE0_SIZE, { P0_A, P0_B } };
-    st.page[1] = (stor_page_t){ tune_page1, tune_default_page1, TUNE_PAGE1_SIZE, { P1_A, P1_B } };
+    st.page[0] = (stor_page_t){ tune_page0, tune_default_page0, TUNE_PAGE0_SIZE, { STOR_P0_A, STOR_P0_B } };
+    st.page[1] = (stor_page_t){ tune_page1, tune_default_page1, TUNE_PAGE1_SIZE, { STOR_P1_A, STOR_P1_B } };
     storage_load(&st);
 }
 

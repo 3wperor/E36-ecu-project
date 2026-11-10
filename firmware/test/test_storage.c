@@ -29,6 +29,7 @@ static uint8_t stor_ee_ready(void)
 }
 
 #include "tune/storage_core.h"
+#include "tune/storage_map.h"
 
 uint8_t tune_page0[TUNE_PAGE0_SIZE];
 uint8_t tune_page1[TUNE_PAGE1_SIZE];
@@ -41,8 +42,8 @@ static storage_t S;
 static void setup(void)
 {
     memset(&S, 0, sizeof S);
-    S.page[0] = (stor_page_t){ tune_page0, tune_default_page0, TUNE_PAGE0_SIZE, { 0, 256 } };
-    S.page[1] = (stor_page_t){ tune_page1, tune_default_page1, TUNE_PAGE1_SIZE, { 512, 2048 } };
+    S.page[0] = (stor_page_t){ tune_page0, tune_default_page0, TUNE_PAGE0_SIZE, { STOR_P0_A, STOR_P0_B } };
+    S.page[1] = (stor_page_t){ tune_page1, tune_default_page1, TUNE_PAGE1_SIZE, { STOR_P1_A, STOR_P1_B } };
 }
 
 /* boot: wipe RAM, load from EEPROM */

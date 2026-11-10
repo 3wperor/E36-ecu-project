@@ -346,42 +346,58 @@ ignition.
 **Still to come (Phase 9):** idle valve closed-loop on RPM target vs CLT; VANOS on/off by RPM × load;
 fan; A/C idle-up; closed-loop lambda.
 
-### 3.5 Knock control
+### 3.5 Knock control (implemented in Phase 5: `firmware/src/knock/`)
 
-- M52 bore 84 mm → first circumferential knock mode ≈ **6.6–6.8 kHz** as a starting bandpass; verify by
-  logging the sensor spectrum on the car.
-- Per firing cylinder: select sensor (cyl 1–3 → sensor 1, 4–6 → sensor 2), open integration window
-  (e.g. 10°–70° ATDC, tunable), close it, read the integrator over SPI in the main loop after the window.
-- Per-cylinder background noise model (learned vs RPM); knock = level > noise × threshold(rpm).
-- Response: per-cylinder retard step proportional to intensity, slow recovery per cycle, global
-  safety enrichment if multiple cylinders knock.
-- Knock logger channel streamed to the tuner (per-cylinder level, noise, retard).
-- **Fallback if TPIC8101 is unobtainable:** analogue bandpass + rectifier + integrator with a gated window,
-  read by the MCU's ADC. Works, less flexible.
+- **Chip:** TI TPIC8101 on SPI (mode 1, 1 MHz, one 8-bit command per chip-select frame), INT/HOLD
+  window pin driven from the crank ISR. Sensor 1 (cylinders 1–3) on channel 0, sensor 2 (4–6) on
+  channel 1; the firing order 1-5-3-6-2-4 alternates the channel every firing.
+- **Windows:** per cylinder, from `knockWinStart` degrees after compression TDC for `knockWinLen`
+  degrees (6–96°), on crank-tooth resolution (6°). A 120-entry tooth table is rebuilt when the angles or
+  TDC offset change. Windows only run in full (720°) sync.
+- **Reading:** on the tooth after a window closes, the crank ISR starts a two-byte SPI exchange
+  (interrupt-driven, never blocking): the bytes sent select the next firing cylinder's sensor, the bytes
+  received are the closed window's 10-bit level. The main loop picks the result up on its next pass
+  (every 2.8 ms at 7,200 rpm a new one arrives).
+- **Detection:** each cylinder learns its own background noise (running average, speed `knockLearn`,
+  plain average for the first 16 windows). Knock = level > noise × threshold(rpm) (6-point curve).
+  Knocking windows don't teach the noise; loud windows while knock control is inactive teach it slowly.
+- **Response:** that cylinder loses `knockStep` (twice for heavy knock, > 1.5 × threshold) up to
+  `knockMaxRetard`; timing comes back at `knockRecover` deg/s. Active only above `knockMinRpm`,
+  `knockMinLoad`, `knockMinClt`, below `knockMaxRpm`, not while cranking.
+- **Safety:** 8 consecutive readings of 0 or full scale = chip fault → every cylinder gets at least
+  `knockFaultRetard` until good readings return.
+- **Live data:** per-cylinder level, learned noise and retard, event count, state bits; `ecu_cli.py knock`
+  shows them as a table.
+- **Assumptions to verify on the bench (Phase 5 hardware step):** the TPIC8101 command encoding and the
+  byte order of the result (all in one block in `knock.c`; the byte order is a tune setting,
+  `knockReadOrder`), and the chip codes for prescaler, band-pass (≈ 6.7 kHz for the 84 mm bore), gain and
+  integrator time (raw codes in the tune, from the datasheet tables).
+- **Fallback if the TPIC8101 is unobtainable:** analogue bandpass + rectifier + integrator with a gated
+  window, read by the MCU's ADC. Same core logic, different driver.
 
 ### 3.6 Timing and resource budget (7,200 RPM)
 
 | Item | Per engine cycle (16.67 ms) |
 |------|-----------------------------|
-| 116 crank ISRs: 20 µs on a plain tooth, up to 56 µs on a tooth that arms several outputs (measured, Phase 3) | ~2.8 ms |
+| 116 crank ISRs: ~21 µs on a plain tooth, 25.7 µs average, up to 66 µs on a tooth that arms outputs and starts a knock read (measured, Phase 5) | ~3.0 ms |
 | Engine calculation, 100 Hz: ~0.9 ms per step incl. interrupts (measured, Phase 4) | ~1.5 ms |
 | Output schedule update, 100 Hz: ~0.44 ms per step | ~0.7 ms |
 | 24 output-compare ISRs × 5.3 µs (measured) | ~0.13 ms |
 | Timer tick, ADC and UART ISRs | ~0.9 ms |
-| **Interrupt load, all 12 outputs running (measured in simavr)** | **23 %** |
-| Main loop still free (after interrupts and the 100 Hz engine and schedule updates) | ~63 % |
+| **Interrupt load, all 12 outputs running (measured in simavr)** | **25 %** |
+| Main loop still free (after interrupts and the 100 Hz engine and schedule updates) | ~60 % |
 
 Each plain tooth spends about a third of its time saving and restoring registers (normal for C ISRs on
 AVR); the rare paths (gap, output arming) are separate functions so the plain path saves as few registers
-as possible. Knock (Phase 5) adds a little per firing event. Regression tests fail if the crank ISR average
-exceeds 25 µs or its worst case 60 µs.
+as possible. The knock hook adds ~1.7 µs per tooth (its work runs after the outputs are armed, so it
+never delays an edge). Regression tests fail if the crank ISR average exceeds 27 µs or its worst case 70 µs.
 
 Main loop: the 12-channel schedule is recomputed at 100 Hz. Fixed-point math, no floats; 32-bit divides only a
 few per update (they cost ~40 µs each on AVR, so angle wrapping and degree conversion use add/subtract and
 multiply-shift instead).
 
-Memory (Phase 4, measured): flash 21 KB of 128 KB (16 %); SRAM 4.0 KB of 8 KB (49 %) static, of which the
-live tune is 1.66 KB; EEPROM 3.5 KB of 4 KB (two copies of the tune). EEPROM is written only on "burn",
+Memory (Phase 5, measured): flash 24 KB of 128 KB (18 %); SRAM 4.3 KB of 8 KB (53 %) static, of which the
+live tune is 1.69 KB; EEPROM 3.7 KB of 4 KB (two copies of the tune). EEPROM is written only on "burn",
 only changed bytes (100k write endurance per byte). SRAM is the resource to watch.
 
 ### 3.7 Main loop scheduling
@@ -538,7 +554,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **3. Scheduler** ✅ (in simulation) | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
 | **4. Engine math + tune storage** ✅ (in simulation) | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tune pages, EEPROM storage, TunerStudio .ini, command-line tune tools |
 | **4b. Tuner MVP** ✅ (in simulation) | Our own GUI | Tuner T1–T3: live gauges, edit tables, burn, save tune (PySide6). Tested against the firmware in simavr; the 3D table view is left for later (`tuner/README.md`) |
-| **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |
+| **5. Knock control** ✅ firmware (simulation); bench step open | Knock chain works | Done in simulation with an emulated TPIC8101: windows at the right angles and on the right sensor, noise learned, knock on one cylinder retards only that cylinder (spark measured), recovery, fault retard. **Still to do on hardware:** TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; chip codes and result byte order confirmed (`firmware/README.md`) |
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |
 | **7. Sniffer mode on the car** | Validate decoder on the real engine with zero risk | Custom ECU wired **in parallel** to stock crank/cam/knock/sensors (outputs disconnected) while the stock DME runs the car; logs show solid sync, correct RPM and sensible sensor values through drives |
 | **8. First start (stock intake)** | Engine runs on the custom ECU | Wideband fitted; base tune from the stock HFM curve and injector data; timing confirmed with timing light; starts, idles, revs; failsafes verified |

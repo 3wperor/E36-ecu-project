@@ -6,6 +6,7 @@ Command-line link to the ECU (the first building block of the tuner).
     python3 tools/ecu_cli.py PORT info                 signature + version
     python3 tools/ecu_cli.py PORT watch                live engine data (Ctrl+C to stop)
     python3 tools/ecu_cli.py PORT teeth                one tooth-log capture
+    python3 tools/ecu_cli.py PORT knock                live knock level / noise / retard per cylinder
 
   Tune (names and units: definitions/ecu.toml, or `tune list`):
     python3 tools/ecu_cli.py PORT tune list            every setting with its value
@@ -285,6 +286,27 @@ def cmd_teeth(ecu, args):
         print(f"  rev {t['rev']} tooth {t['tooth']:2d}  {t['interval_us']:6d} us  sync {t['sync']}  {marks}")
 
 
+KNOCK_BITS = ["enabled", "active", "KNOCK", "CHIP FAULT"]
+
+
+def describe_knock(rt: dict) -> str:
+    st = [b for i, b in enumerate(KNOCK_BITS) if rt["knockState"] & (1 << i)]
+    lines = [f"{rt['rpm']:5d} rpm  knock {' '.join(st) or 'off'}  events {rt['knockCount']}",
+             "  cyl   level   noise   ratio   retard"]
+    for c in range(1, 7):
+        lvl, noi, ret = rt[f"knockLevel{c}"], rt[f"knockNoise{c}"], rt[f"knockRetard{c}"] / 10
+        ratio = f"{lvl / noi:5.2f}" if noi else "    -"
+        lines.append(f"  {c:3d}  {lvl:6d}  {noi:6d}   {ratio}  {ret:5.1f}°")
+    return "\n".join(lines)
+
+
+def cmd_knock(ecu, args):
+    while True:
+        text = describe_knock(ecu.realtime())
+        print("\x1b[H\x1b[J" + text, flush=True)          # clear screen, redraw
+        time.sleep(0.3)
+
+
 def cmd_outputs(ecu, args):
     print(describe_cfg(parse_cfg(ecu.request(b"p"))))
 
@@ -353,7 +375,7 @@ def cmd_tune(ecu, args):
         raise ValueError(f"unknown tune command {sub!r}")
 
 
-COMMANDS = {"info": (cmd_info, 0), "watch": (cmd_watch, 0), "teeth": (cmd_teeth, 0),
+COMMANDS = {"info": (cmd_info, 0), "watch": (cmd_watch, 0), "teeth": (cmd_teeth, 0), "knock": (cmd_knock, 0),
             "outputs": (cmd_outputs, 0), "set": (cmd_set, 1), "tune": (cmd_tune, 1)}
 TUNE_ARGS = {"list": 1, "get": 2, "set": 3, "burn": 1, "save": 2, "load": 2, "defaults": 1}
 

@@ -3,7 +3,7 @@
 Bare-metal C for the ATmega1280 (also builds for the pin-compatible ATmega2560).
 No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 
-## Status — Phases 1 to 4 done in simulation
+## Status — Phases 1 to 5 done in simulation
 
 | Part | State |
 |------|-------|
@@ -22,9 +22,10 @@ No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 | Tune storage: two pages in EEPROM, A/B slots with CRC, background burn, power-cut safe, defaults fallback | done |
 | Sensors: MAF curve, two TPS, CLT/IAT thermistor, battery, wideband, narrowbands, fault detection | done |
 | Engine maths: MAF / Alpha-N / blend load, fuel (AFR target, flow, warm-up, accel and after-start enrichment, cranking, dead time, cylinder trims, rev limiter), ignition (table, coolant and cylinder trims, cranking advance, dwell), end of injection, fuel pump | done — see below |
-| Closed-loop lambda, idle valve, VANOS, knock | Phases 5 and 9 |
+| Knock control: TPIC8101 on SPI, per-cylinder windows, learned noise, per-cylinder retard and recovery, chip-fault retard | done in simulation; chip settings to confirm on the bench (below) |
+| Closed-loop lambda, idle valve, VANOS | Phase 9 |
 
-Current size: ~21 KB flash (16 %), ~4.0 KB RAM (49 %) — RAM is the resource to watch.
+Current size: ~24 KB flash (18 %), ~4.3 KB RAM (53 %) — RAM is the resource to watch.
 
 ### Decoder test results
 
@@ -135,6 +136,41 @@ protocol; at 3000 rpm the calculated pulse width matches an independent calculat
 injectors and coils fire exactly the calculated pulse and dwell; `engine_update` costs ~0.9 ms per 10 ms
 (incl. interrupts); burn → power cycle (new chip, saved EEPROM) → the tune is still there.
 
+### Knock control test results (Phase 5)
+
+`make test` (`test_knock`): window placement for 5,047 combinations of TDC offset, window start and
+length (always 6 opens and 6 closes, never colliding, at least 2 teeth to read the chip and switch
+sensor before the next window); sensor alternation with the firing order; noise learning; detection,
+single and double steps, cap, recovery rate; inactive conditions; chip fault and its retard; threshold
+curve; both result byte orders.
+
+`make sim-test` emulates a TPIC8101 on the simulated SPI bus and INT/HOLD pin: at 3000 rpm, 218
+windows in 1.5 s, evenly over the 6 cylinders, opening 12° ATDC (first tooth after 10°) for 60°, every
+one on the correct sensor; background noise learned (120 vs 120 injected); knock injected on cylinder
+3 retards only cylinder 3, and its spark, measured in the timer registers, moves 9.8° against a 9.7°
+retard; timing comes back at ~1°/s; a chip returning 0 puts 3° on every cylinder; disabling stops the
+windows. Crank ISR with knock running: 25.5 µs average, 66 µs worst.
+
+### Knock chip bench test (Phase 5 hardware step)
+
+The firmware's view of the TPIC8101 rests on assumptions that can only be checked with the chip:
+its command encoding (`knock.c`, one marked block), the byte order of its result (tune setting
+`knockReadOrder`) and its codes for prescaler, band-pass, gain and integrator time (tune settings,
+from the datasheet tables). Bench procedure:
+
+1. Wire a TPIC8101 module to the Mega: SCLK → D52, SI → D51, SO → D50, CS → D53, INT/HOLD → D35,
+   5 V, GND, and the crystal/clock the module uses (set `knockPrescaler` for it from the datasheet).
+2. Feed sensor input 1 from a signal generator through the module's input network: a 6.7 kHz sine,
+   a few hundred mV. Run the trigger simulator at 3000 rpm, set `knockEnable` on.
+3. `python3 tools/ecu_cli.py PORT knock`: the levels should be steady and rise in proportion to the
+   generator amplitude. If they jump around or look like garbage, flip `knockReadOrder`.
+4. Sweep `knockBand`: the level peaks at the code nearest 6.7 kHz. Set `knockGain` so the normal
+   level sits around 100–200 of 1023.
+5. Pulse the generator only during some windows (or swap sensor inputs) and check that the right
+   cylinders show knock and retard.
+
+On the car (Phase 7, sniffer mode) the band is checked again against the real engine's knock sound.
+
 ### Bench-testing the outputs (Phase 3)
 
 With the trigger simulator driving the Mega, a logic analyser on the output pins shows the schedule:
@@ -165,7 +201,7 @@ python3 tuner/run_tuner.py --port /tmp/simavr-uart0   # or the tuner (see ../tun
 
 ## Testing notes
 
-- Portable modules (`comms/`, `decoder/`, `sched/`, `engine/`, `tune/`) are unit-tested on the PC.
+- Portable modules (`comms/`, `decoder/`, `sched/`, `engine/`, `tune/`, `knock/`) are unit-tested on the PC.
 - simavr does not model the ATmega1280's ADC channels 8–15 (selected with MUX5), so the battery input
   (ADC8) reads 0 V in simulation and the battery fault is expected there. Real silicon reads them.
 - simavr 1.6 does **not** model output-compare pins correctly in Normal timer mode

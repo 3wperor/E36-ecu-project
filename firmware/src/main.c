@@ -12,6 +12,7 @@
 #include "comms/comms.h"
 #include "decoder/decoder.h"
 #include "engine/engine.h"
+#include "knock/knock.h"
 #include "tune/tune.h"
 #include "sched/sched.h"
 #include "hal/adc.h"
@@ -90,6 +91,7 @@ int main(void)
     tune_init();            /* tune from EEPROM (defaults if none) */
     decoder_init(tu_camEnable());
     engine_init();
+    knock_init();
     uart_init();
     comms_init();
 
@@ -107,6 +109,7 @@ int main(void)
         uint32_t now = timers_millis();
         comms_poll(now);
         tune_poll();            /* background EEPROM burn */
+        knock_poll();           /* knock chip result after each window */
 
         /* Run each missed 1 ms tick once, so rates stay exact even if one
          * pass of the loop was slow. */

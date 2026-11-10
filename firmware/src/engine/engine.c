@@ -4,6 +4,7 @@
 #include "board.h"
 #include "decoder/decoder_core.h"
 #include "hal/adc.h"
+#include "knock/knock.h"
 #include "status.h"
 #include "tune/tune.h"
 
@@ -38,8 +39,10 @@ void engine_update(const decoder_status_t *ds, sched_input_t *out)
     out->tdc_offset = tu_tdcOffset();
     out->dwell_us = calc.dwell_us;
     out->inj_end = calc.eoi_x10;
+    knock_update(calc.rpm, (uint16_t)(calc.air_d / 10u), s->clt_x10, ds->sync == SYNC_FULL,
+                 (calc.state & ENG_CRANKING) != 0);
     for (uint8_t c = 0; c < 6; c++) {
-        out->advance[c] = calc.advance[c];
+        out->advance[c] = (int16_t)(calc.advance[c] - knock_get_retard(c));
         out->pw_us[c] = calc.pw_us[c];
     }
 
