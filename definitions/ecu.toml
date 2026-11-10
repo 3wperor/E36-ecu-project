@@ -1,0 +1,994 @@
+# E36 M52 ECU — single source of truth for the tune layout and live data.
+#
+#   python3 tools/codegen/gen.py      (also run by `make` in firmware/)
+#
+# generates:
+#   firmware/src/generated/tune_def.h   page sizes, offsets, raw accessors, defaults
+#   firmware/src/generated/realtime.h   realtime_t (live data sent to the tuner)
+#   tuner/e36ecu.ini                    TunerStudio project definition
+#   tuner/ecu_def.json                  layout for tools/ecu_cli.py and our own tuner
+#
+# Value encoding follows TunerStudio:  shown value = (raw + translate) * scale
+# Defaults below are in shown units; the generator converts them to raw.
+# Arrays: shape = [n] or [x, y] (x varies fastest in memory, like TunerStudio).
+#
+# DEFAULTS ARE A SAFE STARTING POINT, NOT A TUNE: rich, retarded, outputs off.
+# Injector flow, MAF curve and dead times must be set for the real parts.
+
+[meta]
+signature = "E36ECU-dev-p4"
+version = "E36 ECU firmware 0.4.0 (phase 4: engine maths + tune storage)"
+
+# ============================================================== page 0: settings
+[[pages]]
+id = 0
+name = "settings"
+
+# ---- engine and injectors
+[[pages.fields]]
+name = "displacement"
+type = "U16"
+units = "cc"
+min = 500
+max = 6000
+default = 2494
+help = "Total engine displacement (M52B25: 2494 cc)."
+
+[[pages.fields]]
+name = "injFlow"
+type = "U16"
+units = "cc/min"
+min = 50
+max = 2000
+default = 250
+help = "Injector flow at the actual fuel pressure. PLACEHOLDER: set from the motorcycle injectors' data."
+
+[[pages.fields]]
+name = "fuelDensity"
+type = "U16"
+units = "g/cc"
+scale = 0.001
+min = 0.6
+max = 0.9
+digits = 3
+default = 0.745
+help = "Fuel density (petrol about 0.745)."
+
+[[pages.fields]]
+name = "injDeadV"
+type = "U08"
+shape = [6]
+units = "V"
+scale = 0.1
+min = 6
+max = 20
+digits = 1
+default = [8, 10, 12, 14, 16, 18]
+
+[[pages.fields]]
+name = "injDead"
+type = "U16"
+shape = [6]
+units = "us"
+min = 0
+max = 5000
+default = [1500, 1100, 850, 700, 600, 520]
+help = "Injector opening (dead) time vs battery voltage. PLACEHOLDER: typical high-impedance values."
+
+# ---- ignition
+[[pages.fields]]
+name = "tdcOffset"
+type = "U16"
+units = "deg"
+scale = 0.1
+min = 0
+max = 719.9
+digits = 1
+default = 0
+help = "Cylinder 1 compression TDC, degrees after decoder tooth 0. Set with a timing light."
+
+[[pages.fields]]
+name = "dwellV"
+type = "U08"
+shape = [6]
+units = "V"
+scale = 0.1
+min = 6
+max = 20
+digits = 1
+default = [8, 10, 12, 14, 16, 18]
+
+[[pages.fields]]
+name = "dwell"
+type = "U16"
+shape = [6]
+units = "us"
+min = 500
+max = 8000
+default = [5000, 4000, 3200, 2800, 2500, 2300]
+help = "Coil charge time vs battery voltage (stock M52 coils: about 3 ms at 14 V)."
+
+[[pages.fields]]
+name = "cylIgnTrim"
+type = "U08"
+shape = [6]
+units = "deg"
+scale = 0.5
+translate = -20
+min = -10
+max = 10
+digits = 1
+default = [0, 0, 0, 0, 0, 0]
+help = "Per-cylinder timing trim, cylinders 1-6."
+
+[[pages.fields]]
+name = "cltAdvT"
+type = "U08"
+shape = [6]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [-20, 0, 20, 40, 60, 80]
+
+[[pages.fields]]
+name = "cltAdv"
+type = "U08"
+shape = [6]
+units = "deg"
+scale = 0.5
+translate = -20
+min = -10
+max = 10
+digits = 1
+default = [4, 3, 2, 1, 0, 0]
+help = "Timing added vs coolant temperature."
+
+# ---- cranking and starting
+[[pages.fields]]
+name = "crankRpm"
+type = "U08"
+units = "rpm"
+scale = 10
+min = 100
+max = 1000
+default = 400
+help = "Below this the engine is cranking: cranking fuel and fixed timing."
+
+[[pages.fields]]
+name = "crankAdvance"
+type = "U08"
+units = "deg"
+scale = 0.5
+translate = -40
+min = -10
+max = 30
+digits = 1
+default = 10
+
+[[pages.fields]]
+name = "crankPwT"
+type = "U08"
+shape = [8]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [-20, 0, 20, 40, 60, 80, 100, 120]
+
+[[pages.fields]]
+name = "crankPw"
+type = "U16"
+shape = [8]
+units = "us"
+min = 0
+max = 30000
+default = [16000, 12000, 9000, 7000, 5500, 4500, 4000, 3500]
+help = "Cranking pulse width per cycle vs coolant. PLACEHOLDER: starting point."
+
+[[pages.fields]]
+name = "afterStart"
+type = "U08"
+units = "%"
+min = 0
+max = 100
+default = 30
+help = "Extra fuel right after the engine starts, fading out over afterStartTime."
+
+[[pages.fields]]
+name = "afterStartTime"
+type = "U08"
+units = "s"
+min = 0
+max = 60
+default = 15
+
+# ---- warm-up
+[[pages.fields]]
+name = "warmupT"
+type = "U08"
+shape = [8]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [-20, 0, 20, 40, 60, 70, 80, 90]
+
+[[pages.fields]]
+name = "warmup"
+type = "U08"
+shape = [8]
+units = "%"
+min = 100
+max = 255
+default = [180, 160, 140, 125, 112, 106, 102, 100]
+help = "Fuel multiplier vs coolant (100 = none)."
+
+# ---- acceleration enrichment
+[[pages.fields]]
+name = "aeRate"
+type = "U08"
+shape = [4]
+units = "%/s"
+scale = 10
+min = 0
+max = 2550
+default = [50, 100, 200, 400]
+
+[[pages.fields]]
+name = "aeAdd"
+type = "U08"
+shape = [4]
+units = "%"
+min = 0
+max = 200
+default = [10, 20, 35, 50]
+help = "Extra fuel vs throttle opening speed."
+
+[[pages.fields]]
+name = "aeTime"
+type = "U08"
+units = "ms"
+scale = 10
+min = 0
+max = 2550
+default = 200
+
+# ---- limits, modes, outputs
+[[pages.fields]]
+name = "revLimit"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 1000
+max = 9000
+default = 6500
+help = "Fuel cut above this. Start low until the engine is tuned."
+
+[[pages.fields]]
+name = "revHyst"
+type = "U08"
+units = "rpm"
+scale = 10
+min = 50
+max = 1000
+default = 200
+
+[[pages.fields]]
+name = "loadSource"
+type = "U08"
+bits = [0, 1]
+options = ["MAF", "Alpha-N", "Blend (table)", "INVALID"]
+default = 0
+help = "How air mass is measured: MAF (stock intake), Alpha-N (throttle x rpm VE table) or a blend of both."
+
+[[pages.fields]]
+name = "ignEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 0
+help = "Ignition outputs. OFF in the default tune for safety."
+
+[[pages.fields]]
+name = "injEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 0
+help = "Injector outputs. OFF in the default tune for safety."
+
+[[pages.fields]]
+name = "camEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Crank only (wasted spark)", "Cam sensor (sequential)"]
+default = 1
+
+[[pages.fields]]
+name = "fuelPumpPrime"
+type = "U08"
+units = "s"
+min = 0
+max = 10
+default = 2
+
+[[pages.fields]]
+name = "cylFuelTrim"
+type = "U08"
+shape = [6]
+units = "%"
+translate = -100
+min = -30
+max = 30
+default = [0, 0, 0, 0, 0, 0]
+help = "Per-cylinder fuel trim, cylinders 1-6."
+
+# ---- sensors
+[[pages.fields]]
+name = "mafV"
+type = "U08"
+shape = [16]
+units = "V"
+scale = 0.02
+min = 0
+max = 5.1
+digits = 2
+default = [0.0, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.2, 3.6, 4.0, 4.4, 4.8]
+
+[[pages.fields]]
+name = "mafFlow"
+type = "U16"
+shape = [16]
+units = "g/s"
+scale = 0.01
+min = 0
+max = 655
+digits = 2
+default = [0.0, 1.5, 3.0, 5.0, 7.5, 10.5, 14.0, 18.5, 24.0, 30.5, 38.0, 56.0, 78.0, 105.0, 138.0, 178.0]
+help = "MAF transfer curve. PLACEHOLDER shape only: replace with the curve for the actual HFM part number and correct with the wideband."
+
+[[pages.fields]]
+name = "tps1Min"
+type = "U16"
+units = "adc"
+min = 0
+max = 1023
+default = 100
+
+[[pages.fields]]
+name = "tps1Max"
+type = "U16"
+units = "adc"
+min = 0
+max = 1023
+default = 920
+
+[[pages.fields]]
+name = "tps2Min"
+type = "U16"
+units = "adc"
+min = 0
+max = 1023
+default = 100
+
+[[pages.fields]]
+name = "tps2Max"
+type = "U16"
+units = "adc"
+min = 0
+max = 1023
+default = 920
+
+[[pages.fields]]
+name = "tpsCount"
+type = "U08"
+bits = [0, 0]
+options = ["One sensor", "Two sensors (one per bank)"]
+default = 0
+
+[[pages.fields]]
+name = "thermAdc"
+type = "U16"
+shape = [12]
+units = "adc"
+min = 0
+max = 1023
+default = [38, 53, 74, 106, 154, 225, 327, 462, 619, 770, 888, 962]
+help = "Thermistor curve ADC points (2.49 k pull-up). Defaults: NTC with 2.5 k at 20 C and 0.33 k at 80 C (typical Bosch/BMW sensor); check against the real sensor."
+
+[[pages.fields]]
+name = "thermC"
+type = "U08"
+shape = [12]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [130, 115, 100, 85, 70, 55, 40, 25, 10, -5, -20, -35]
+help = "Temperature at each thermistor ADC point (used for coolant and intake air)."
+
+[[pages.fields]]
+name = "vbatScale"
+type = "U16"
+units = "x"
+scale = 0.01
+min = 1
+max = 10
+digits = 2
+default = 4.0
+help = "Battery divider ratio (input volts per ADC volt)."
+
+[[pages.fields]]
+name = "afrAt0V"
+type = "U08"
+units = "AFR"
+scale = 0.1
+min = 5
+max = 25
+digits = 1
+default = 10.0
+help = "Wideband controller output: AFR at 0 V."
+
+[[pages.fields]]
+name = "afrAt5V"
+type = "U08"
+units = "AFR"
+scale = 0.1
+min = 5
+max = 25
+digits = 1
+default = 20.0
+help = "Wideband controller output: AFR at 5 V."
+
+[[pages.fields]]
+name = "baro"
+type = "U08"
+units = "kPa"
+min = 60
+max = 110
+default = 101
+help = "Barometric pressure for the Alpha-N air density."
+
+# ============================================================== page 1: tables
+[[pages]]
+id = 1
+name = "tables"
+
+[[pages.fields]]
+name = "rpmBins"
+type = "U08"
+shape = [16]
+units = "rpm"
+scale = 100
+min = 0
+max = 9000
+default = [500, 800, 1100, 1400, 1700, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7200]
+
+[[pages.fields]]
+name = "tpsBins"
+type = "U08"
+shape = [16]
+units = "%"
+scale = 0.5
+min = 0
+max = 100
+digits = 1
+default = [0, 1, 2, 3, 4, 5, 7, 10, 13, 17, 22, 30, 40, 55, 75, 100]
+help = "Throttle axis, bunched at small openings for ITBs."
+
+[[pages.fields]]
+name = "loadBins"
+type = "U16"
+shape = [16]
+units = "mg"
+min = 0
+max = 1000
+default = [50, 80, 110, 140, 170, 200, 240, 280, 320, 360, 400, 440, 480, 520, 560, 600]
+help = "Load axis: air mass per cylinder per intake stroke."
+
+[[pages.fields]]
+name = "veTable"
+type = "U08"
+shape = [16, 16]
+units = "%"
+scale = 0.5
+min = 0
+max = 127.5
+digits = 1
+default = "ve"
+help = "Alpha-N volumetric efficiency, rpm x throttle."
+
+[[pages.fields]]
+name = "blendTable"
+type = "U08"
+shape = [16, 16]
+units = "%"
+min = 0
+max = 100
+default = 100
+help = "Weight of the MAF in the load when loadSource = Blend (100 = MAF only, 0 = Alpha-N only)."
+
+[[pages.fields]]
+name = "mafTrim"
+type = "U08"
+shape = [16, 16]
+units = "%"
+translate = -100
+min = -50
+max = 50
+default = 0
+help = "Correction to the MAF reading, rpm x throttle (ITB pulsation)."
+
+[[pages.fields]]
+name = "afrTable"
+type = "U08"
+shape = [16, 16]
+units = "AFR"
+scale = 0.1
+min = 9
+max = 18
+digits = 1
+default = "afr"
+help = "Target air/fuel ratio, rpm x load."
+
+[[pages.fields]]
+name = "ignTable"
+type = "U08"
+shape = [16, 16]
+units = "deg"
+scale = 0.5
+translate = -40
+min = -10
+max = 50
+digits = 1
+default = "ign"
+help = "Ignition advance, rpm x load. Default is deliberately conservative."
+
+[[pages.fields]]
+name = "eoiRpm"
+type = "U08"
+shape = [8]
+units = "rpm"
+scale = 100
+min = 0
+max = 9000
+default = [800, 1500, 2500, 3500, 4500, 5500, 6500, 7200]
+
+[[pages.fields]]
+name = "eoiLoad"
+type = "U16"
+shape = [8]
+units = "mg"
+min = 0
+max = 1000
+default = [80, 150, 220, 290, 360, 430, 500, 570]
+
+[[pages.fields]]
+name = "eoiTable"
+type = "U08"
+shape = [8, 8]
+units = "deg BTDC"
+scale = 3
+min = 0
+max = 717
+default = "eoi"
+help = "End of injection, degrees before compression TDC (360+ = closed intake valve)."
+
+# ============================================================== live data
+# Order and types define realtime_t (firmware) and [OutputChannels] (ini).
+[[channels]]
+name = "uptime_ms"
+type = "U32"
+units = "ms"
+
+[[channels]]
+name = "loops_per_sec"
+type = "U16"
+
+[[channels]]
+name = "reset_cause"
+type = "U08"
+
+[[channels]]
+name = "flags"
+type = "U08"
+
+[[channels]]
+name = "adc"
+type = "U16"
+shape = [10]
+names = ["adcMaf", "adcTps1", "adcTps2", "adcClt", "adcIat", "adcWbo2", "adcNbo2a", "adcNbo2b", "adcVbat", "adcMap"]
+units = "adc"
+
+[[channels]]
+name = "uart_overflows"
+type = "U16"
+
+[[channels]]
+name = "frame_errors"
+type = "U16"
+
+[[channels]]
+name = "rpm"
+type = "U16"
+units = "rpm"
+gauge = [0, 8000, 300, 600, 6500, 7200]
+log = true
+
+[[channels]]
+name = "rpm_inst"
+type = "U16"
+units = "rpm"
+
+[[channels]]
+name = "sync"
+type = "U08"
+log = true
+
+[[channels]]
+name = "cam_pos"
+type = "U08"
+
+[[channels]]
+name = "loss_reason"
+type = "U08"
+
+[[channels]]
+name = "out_enable"
+type = "U08"
+
+[[channels]]
+name = "sync_losses"
+type = "U16"
+log = true
+
+[[channels]]
+name = "noise_teeth"
+type = "U16"
+
+[[channels]]
+name = "cam_errors"
+type = "U16"
+
+[[channels]]
+name = "sched_late"
+type = "U16"
+
+[[channels]]
+name = "sched_overlap"
+type = "U16"
+
+[[channels]]
+name = "engine"
+type = "U08"
+help = "bit 0 running, 1 cranking, 2 rev limit, 3 accel enrichment, 4 after-start, 5 test mode, 6 burning, 7 fuel pump"
+log = true
+
+[[channels]]
+name = "faults"
+type = "U08"
+help = "bit 0 TPS1, 1 TPS2, 2 TPS disagree, 3 CLT, 4 IAT, 5 MAF, 6 battery, 7 tune defaults loaded"
+
+[[channels]]
+name = "tps"
+type = "U16"
+units = "%"
+scale = 0.1
+digits = 1
+gauge = [0, 100, -1, -1, 101, 101]
+log = true
+
+[[channels]]
+name = "tpsDot"
+type = "S16"
+units = "%/s"
+log = true
+
+[[channels]]
+name = "clt"
+type = "S16"
+units = "C"
+scale = 0.1
+digits = 1
+gauge = [-40, 130, -20, 0, 105, 115]
+log = true
+
+[[channels]]
+name = "iat"
+type = "S16"
+units = "C"
+scale = 0.1
+digits = 1
+gauge = [-40, 100, -20, 0, 50, 60]
+log = true
+
+[[channels]]
+name = "vbat"
+type = "U16"
+units = "V"
+scale = 0.01
+digits = 2
+gauge = [8, 16, 11, 12, 15, 15.5]
+log = true
+
+[[channels]]
+name = "mafVolts"
+type = "U16"
+units = "V"
+scale = 0.001
+digits = 3
+log = true
+
+[[channels]]
+name = "mafGs"
+type = "U16"
+units = "g/s"
+scale = 0.01
+digits = 2
+gauge = [0, 200, -1, -1, 180, 190]
+log = true
+
+[[channels]]
+name = "afr"
+type = "U16"
+units = "AFR"
+scale = 0.01
+digits = 2
+gauge = [10, 20, 11, 11.5, 15.5, 16.5]
+log = true
+
+[[channels]]
+name = "afrTarget"
+type = "U16"
+units = "AFR"
+scale = 0.01
+digits = 2
+log = true
+
+[[channels]]
+name = "nbo2a"
+type = "U16"
+units = "mV"
+log = true
+
+[[channels]]
+name = "nbo2b"
+type = "U16"
+units = "mV"
+log = true
+
+[[channels]]
+name = "air"
+type = "U16"
+units = "mg"
+scale = 0.1
+digits = 1
+gauge = [0, 700, -1, -1, 650, 680]
+log = true
+
+[[channels]]
+name = "ve"
+type = "U16"
+units = "%"
+scale = 0.1
+digits = 1
+log = true
+
+[[channels]]
+name = "blend"
+type = "U08"
+units = "%"
+log = true
+
+[[channels]]
+name = "warmupCor"
+type = "U08"
+units = "%"
+log = true
+
+[[channels]]
+name = "aeCor"
+type = "U08"
+units = "%"
+log = true
+
+[[channels]]
+name = "asCor"
+type = "U08"
+units = "%"
+log = true
+
+[[channels]]
+name = "pw"
+type = "U16"
+units = "ms"
+scale = 0.001
+digits = 3
+gauge = [0, 25, -1, -1, 15, 20]
+log = true
+
+[[channels]]
+name = "deadTime"
+type = "U16"
+units = "ms"
+scale = 0.001
+digits = 3
+
+[[channels]]
+name = "duty"
+type = "U08"
+units = "%"
+gauge = [0, 100, -1, -1, 80, 90]
+log = true
+
+[[channels]]
+name = "advance"
+type = "S16"
+units = "deg"
+scale = 0.1
+digits = 1
+gauge = [-10, 50, -5, 0, 40, 45]
+log = true
+
+[[channels]]
+name = "dwellUs"
+type = "U16"
+units = "ms"
+scale = 0.001
+digits = 2
+log = true
+
+[[channels]]
+name = "eoi"
+type = "U16"
+units = "deg"
+scale = 0.1
+digits = 1
+
+# ============================================================== TunerStudio UI
+[[dialogs]]
+name = "engineDlg"
+title = "Engine and injectors"
+menu = "Fuel"
+fields = ["displacement", "injFlow", "fuelDensity", "loadSource", "injEnable", "revLimit", "revHyst", "fuelPumpPrime"]
+
+[[dialogs]]
+name = "startDlg"
+title = "Cranking and after-start"
+menu = "Fuel"
+fields = ["crankRpm", "crankAdvance", "afterStart", "afterStartTime"]
+
+[[dialogs]]
+name = "aeDlg"
+title = "Acceleration enrichment"
+menu = "Fuel"
+fields = ["aeTime"]
+
+[[dialogs]]
+name = "ignDlg"
+title = "Ignition"
+menu = "Ignition"
+fields = ["ignEnable", "tdcOffset", "camEnable"]
+
+[[dialogs]]
+name = "sensorDlg"
+title = "Sensors"
+menu = "Sensors"
+fields = ["tpsCount", "tps1Min", "tps1Max", "tps2Min", "tps2Max", "vbatScale", "afrAt0V", "afrAt5V", "baro"]
+
+[[curves]]
+name = "injDeadCurve"
+title = "Injector dead time"
+menu = "Fuel"
+x = "injDeadV"
+y = "injDead"
+
+[[curves]]
+name = "crankPwCurve"
+title = "Cranking pulse width"
+menu = "Fuel"
+x = "crankPwT"
+y = "crankPw"
+
+[[curves]]
+name = "warmupCurve"
+title = "Warm-up enrichment"
+menu = "Fuel"
+x = "warmupT"
+y = "warmup"
+
+[[curves]]
+name = "aeCurve"
+title = "Acceleration enrichment"
+menu = "Fuel"
+x = "aeRate"
+y = "aeAdd"
+
+[[curves]]
+name = "dwellCurve"
+title = "Dwell"
+menu = "Ignition"
+x = "dwellV"
+y = "dwell"
+
+[[curves]]
+name = "cltAdvCurve"
+title = "Coolant timing trim"
+menu = "Ignition"
+x = "cltAdvT"
+y = "cltAdv"
+
+[[curves]]
+name = "mafCurve"
+title = "MAF transfer curve"
+menu = "Sensors"
+x = "mafV"
+y = "mafFlow"
+
+[[curves]]
+name = "thermCurve"
+title = "Thermistor (CLT / IAT)"
+menu = "Sensors"
+x = "thermAdc"
+y = "thermC"
+
+[[tables]]
+name = "afrTbl"
+title = "AFR target"
+menu = "Fuel"
+x = "rpmBins"
+y = "loadBins"
+z = "afrTable"
+xchan = "rpm"
+ychan = "air"
+
+[[tables]]
+name = "veTbl"
+title = "Alpha-N VE"
+menu = "Fuel"
+x = "rpmBins"
+y = "tpsBins"
+z = "veTable"
+xchan = "rpm"
+ychan = "tps"
+
+[[tables]]
+name = "blendTbl"
+title = "MAF / Alpha-N blend"
+menu = "Fuel"
+x = "rpmBins"
+y = "tpsBins"
+z = "blendTable"
+xchan = "rpm"
+ychan = "tps"
+
+[[tables]]
+name = "mafTrimTbl"
+title = "MAF trim"
+menu = "Fuel"
+x = "rpmBins"
+y = "tpsBins"
+z = "mafTrim"
+xchan = "rpm"
+ychan = "tps"
+
+[[tables]]
+name = "eoiTbl"
+title = "End of injection"
+menu = "Fuel"
+x = "eoiRpm"
+y = "eoiLoad"
+z = "eoiTable"
+xchan = "rpm"
+ychan = "air"
+
+[[tables]]
+name = "ignTbl"
+title = "Ignition advance"
+menu = "Ignition"
+x = "rpmBins"
+y = "loadBins"
+z = "ignTable"
+xchan = "rpm"
+ychan = "air"

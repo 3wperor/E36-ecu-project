@@ -11,6 +11,8 @@
 #include "board.h"
 #include "comms/comms.h"
 #include "decoder/decoder.h"
+#include "engine/engine.h"
+#include "tune/tune.h"
 #include "sched/sched.h"
 #include "hal/adc.h"
 #include "hal/io.h"
@@ -41,14 +43,23 @@ static void task_100hz(void)
     rt.noise_teeth = ds.noise_teeth;
     rt.cam_errors = ds.cam_errors;
 
-    sched_update(ds.sync, ds.period4, ds.rev_ticks);
+    /* Engine calculation always runs (live data); bench test settings, when
+     * enabled, replace its outputs. */
+    sched_input_t in;
+    engine_update(&ds, &in);
+    if (sched_test_active()) {
+        sched_test_input(&in);
+        rt.engine |= 0x20;      /* ENG_TESTMODE */
+    }
+    sched_update(ds.sync, ds.period4, ds.rev_ticks, &in);
     sched_stats_t st;
     sched_get_stats(&st);
-    rt.out_enable = st.enable;
+    rt.out_enable = in.enable;
+    (void)st.enable;
     rt.sched_late = st.late;
     rt.sched_overlap = st.overlap;
 
-    /* Phase 4+: fuel and ignition corrections, lambda control, idle. */
+    /* Phase 9: lambda control, idle, VANOS. */
 }
 
 static void task_10hz(void)
@@ -76,7 +87,9 @@ int main(void)
     timers_init();
     sched_init_hw();        /* compare units own the output pins, all OFF */
     adc_init();
-    decoder_init(1);        /* cam enabled; becomes a tune setting in Phase 4 */
+    tune_init();            /* tune from EEPROM (defaults if none) */
+    decoder_init(tu_camEnable());
+    engine_init();
     uart_init();
     comms_init();
 
@@ -93,6 +106,7 @@ int main(void)
 
         uint32_t now = timers_millis();
         comms_poll(now);
+        tune_poll();            /* background EEPROM burn */
 
         /* Run each missed 1 ms tick once, so rates stay exact even if one
          * pass of the loop was slow. */

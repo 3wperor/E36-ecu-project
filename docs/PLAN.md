@@ -305,38 +305,46 @@ worst case). Dwell and pulse width exact to a tick. Spark within 0.3° during a 
 If finer resolution is ever wanted, the timers can run at 0.5 µs (prescaler /8) with software overflow
 extension.
 
-### 3.4 Engine math (main loop, fixed-point integers)
+### 3.4 Engine math (implemented in Phase 4: `firmware/src/engine/`)
 
-**Load = air mass per cylinder (mg/stroke), from the MAF blended with Alpha-N:**
+Integer fixed point throughout (floating point costs ~150 µs per operation on AVR). Runs every 10 ms;
+values that depend only on the tune or slow sensors (temperatures, battery, injector flow, air density)
+are cached every 100 ms, so the 100 Hz step needs only a few divisions. Measured: ~0.9 ms per 10 ms step
+including interrupts (≈ 9 % CPU), see §3.6.
+
+**Load = air mass per cylinder per intake stroke (mg), selected by `loadSource`:**
 ```
-maf_gps      = MAF_curve(volts) × MAF_trim(rpm, tps)                 // stock HFM curve + correction table
-air_maf      = maf_gps × 20000 / rpm                                  // mg per cylinder per intake event (6 cyl, 4-stroke)
-air_alphaN   = VE_alphaN(rpm, tps) × cyl_volume × air_density(iat, baro)
-w            = blend(rpm, tps)                                        // 0…1 table: how much to trust the MAF
-air_per_cyl  = w × air_maf + (1 − w) × air_alphaN
+MAF       air = MAF_curve(volts) × 20000 / rpm × MAF_trim(rpm, tps)     (stock HFM; 6 cyl, 4-stroke)
+Alpha-N   air = VE(rpm, tps) × cylinder volume × air density(IAT, baro)
+Blend     air = w × MAF + (1 − w) × Alpha-N,  w = blend(rpm, tps)
 ```
 
 **Fuel:**
 ```
-fuel_mg = air_per_cyl / AFR_target(rpm, load)
-PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed_loop(afr) + dead_time(vbatt)
+pulse = air / AFR_target(rpm, load) / injector flow
+        × warm-up(CLT) × (1 + accel enrichment(TPS rate) + after-start)
+        × cylinder trim + dead time(battery)
 ```
-- Injector flow from the motorcycle injectors' data (measured if unknown), corrected for actual fuel
-  pressure; 2,494 cc / 6 cyl ≈ 416 cc per cylinder.
-- On the stock intake the blend table is ~100 % MAF everywhere. With ITBs it shifts toward Alpha-N where
-  the MAF struggles (§3.8).
-- AFR target table (rpm × load) drives the closed loop and the tuner's MAF-trim/VE auto-tune.
-- Cranking fuel and after-start enrichment tables.
-- Injection timing table: end-of-injection angle (rpm × load).
+- Injector flow = cc/min × fuel density; 2,494 cc / 6 ≈ 416 cc per cylinder.
+- Cranking (below `crankRpm`): pulse from the cranking curve vs coolant instead.
+- Acceleration enrichment: throttle opening rate → extra fuel, fading over `aeTime`. After-start
+  enrichment fades over `afterStartTime`.
+- Rev limiter: fuel cut with hysteresis. Fuel stops whenever the engine is not synced/turning.
+- Closed-loop lambda (narrowband and wideband) comes in Phase 9 (§3.9).
 
-**Ignition:**
-- Advance table (rpm × load) + CLT/IAT trims + per-cylinder knock retard + idle timing control.
-- Dwell vs battery voltage table, reduced at very high RPM so dwell + spark fits the cycle.
-- Rev limiter: soft (spark retard) → hard (fuel cut / spark cut, staggered per cylinder).
+**Ignition:** advance table (rpm × load) + coolant trim + per-cylinder trim; fixed cranking advance;
+dwell vs battery voltage; end of injection from an 8 × 8 table. Per-cylinder knock retard: Phase 5.
 
-**Tables:** 16 × 16 bilinear interpolation, 8-bit values with per-table scale/offset, 16-bit axes.
+**Sensors:** two TPS inputs (average, or the lower one if they disagree by > 10 %), shared thermistor curve
+for CLT/IAT, battery divider, MAF curve, wideband 0–5 V linear, narrowbands in mV. Open/shorted sensors set
+fault bits and fall back to safe values (CLT 60 °C, IAT 30 °C, throttle closed).
 
-**Aux:** idle valve closed-loop on RPM target vs CLT; VANOS on/off by RPM × load table; fan control; A/C idle-up.
+**Tables:** 16 × 16 (8 × 8 for injection timing), bilinear interpolation, 8-bit values with scale/translate,
+8- or 16-bit axes. RPM × TPS axes for the Alpha-N, blend and MAF-trim tables; RPM × load for AFR and
+ignition.
+
+**Still to come (Phase 9):** idle valve closed-loop on RPM target vs CLT; VANOS on/off by RPM × load;
+fan; A/C idle-up; closed-loop lambda.
 
 ### 3.5 Knock control
 
@@ -356,10 +364,12 @@ PW      = fuel_mg / injector_flow × warmup(clt) × accel_enrich(dTPS) × closed
 | Item | Per engine cycle (16.67 ms) |
 |------|-----------------------------|
 | 116 crank ISRs: 20 µs on a plain tooth, up to 56 µs on a tooth that arms several outputs (measured, Phase 3) | ~2.8 ms |
+| Engine calculation, 100 Hz: ~0.9 ms per step incl. interrupts (measured, Phase 4) | ~1.5 ms |
+| Output schedule update, 100 Hz: ~0.44 ms per step | ~0.7 ms |
 | 24 output-compare ISRs × 5.3 µs (measured) | ~0.13 ms |
 | Timer tick, ADC and UART ISRs | ~0.9 ms |
 | **Interrupt load, all 12 outputs running (measured in simavr)** | **23 %** |
-| Main loop available | ~77 % |
+| Main loop still free (after interrupts and the 100 Hz engine and schedule updates) | ~63 % |
 
 Each plain tooth spends about a third of its time saving and restoring registers (normal for C ISRs on
 AVR); the rare paths (gap, output arming) are separate functions so the plain path saves as few registers
@@ -370,8 +380,9 @@ Main loop: the 12-channel schedule is recomputed at 100 Hz. Fixed-point math, no
 few per update (they cost ~40 µs each on AVR, so angle wrapping and degree conversion use add/subtract and
 multiply-shift instead).
 
-Memory (estimate): flash 30–50 KB of 128 KB; SRAM ~2 KB working tune + ~1 KB buffers + stack of 8 KB;
-EEPROM ~2–3 KB of 4 KB for tune pages + CRC. EEPROM is written only on "burn" (100k write endurance).
+Memory (Phase 4, measured): flash 21 KB of 128 KB (16 %); SRAM 4.0 KB of 8 KB (49 %) static, of which the
+live tune is 1.66 KB; EEPROM 3.5 KB of 4 KB (two copies of the tune). EEPROM is written only on "burn",
+only changed bytes (100k write endurance per byte). SRAM is the resource to watch.
 
 ### 3.7 Main loop scheduling
 
@@ -460,20 +471,26 @@ both banks merge, so it sees all six cylinders. On one bank it only sees three.
 - **Decided: TunerStudio-compatible framing** — the length-prefixed, CRC32-checked serial protocol that
   Speeduino and rusEFI also implement. Our own tuner speaks the same protocol, so the firmware has one
   protocol and two GUIs can talk to it (§5).
-- Commands (mapped onto that protocol's command set): signature/version, realtime data, page read,
-  page write (live, RAM only), burn to EEPROM, plus our extensions:
-  `TOOTH_LOGGER`, `COMPOSITE_LOGGER` (crank+cam edges), `KNOCK_LOGGER`, `SET_TEST_MODE` (fixed timing,
-  injector/coil output tests), `REBOOT_TO_BOOTLOADER`.
-- Realtime packet ~64 bytes at 30–50 Hz ≈ 2–3.2 KB/s, within the 11.5 KB/s link.
+- Commands (implemented): `Q` signature, `S` version, `A` all live data, `O` live data slice,
+  `R`/`M` read/write tune page bytes (u16 little-endian page, offset, count), `B` burn page, `D` restore
+  page defaults, `T` tooth logger, `P`/`p` bench output test. Still to come: composite and knock loggers,
+  reboot-to-bootloader.
+- Live data: 93 bytes; at 30–50 Hz ≈ 3–4.7 KB/s, within the 11.5 KB/s link.
 
-**Single source of truth:** one definition file (`definitions/ecu.yaml`) describes every page, table, axis,
-scalar, scale, unit and realtime channel. A code generator produces:
-- the C structs + offsets for the firmware (`firmware/src/generated/`),
-- the tuner's table/gauge definitions,
-- a TunerStudio `.ini`,
-so firmware and GUIs can never disagree about memory layout. (This plays the role TunerPro's XDF plays —
-but generated, not hand-written.) Firmware reports the definition's hash; the tuner refuses to write to a
-mismatched ECU.
+**Single source of truth (implemented):** `definitions/ecu.toml` describes every page, field, table, curve,
+dialog and live-data channel. `tools/codegen/gen.py` generates:
+- `firmware/src/generated/`: page sizes, offsets and accessors, default tune (in flash), `realtime_t`;
+- `tuner/e36ecu.ini`: TunerStudio project definition;
+- `tuner/ecu_def.json`: layout for `tools/ecu_cli.py` and our own tuner,
+so firmware and tools can never disagree about the layout. `make test` fails if a generated file is out of
+date. The firmware signature and a layout hash change with the layout: tune files and stored tunes from a
+different layout are refused.
+
+**Tune storage (implemented):** two pages (settings 226 bytes, tables 1,432 bytes), each with two slots in
+EEPROM (`[magic][sequence][layout hash][CRC32][data]`). A burn writes the inactive slot in the background
+(~3.4 ms per byte, only changed bytes) and validates it last, so a power cut during a burn keeps the
+previous tune; tested by cutting power after every single write. No valid slot → the default tune
+(outputs off), flagged in the live data.
 
 ---
 
@@ -513,7 +530,8 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **1. Foundations** ✅ (in simulation) | Firmware skeleton on an Arduino Mega | Build system, HAL, UART protocol skeleton, 1 kHz tick, ADC, watchdog; trigger simulator generates 60-2 + cam from 20 to 9,000 RPM. Verified in simavr; still to verify on real boards (see `firmware/README.md`) |
 | **2. Decoder** ✅ (in simulation) | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
 | **3. Scheduler** ✅ (in simulation) | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
-| **4. Engine math + tuner MVP** | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tuner T1–T3: live gauges, edit tables, burn, save tune |
+| **4. Engine math + tune storage** ✅ (in simulation) | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tune pages, EEPROM storage, TunerStudio .ini, command-line tune tools |
+| **4b. Tuner MVP** | Our own GUI | Tuner T1–T3: live gauges, edit tables, burn, save tune (PySide6) |
 | **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |
 | **7. Sniffer mode on the car** | Validate decoder on the real engine with zero risk | Custom ECU wired **in parallel** to stock crank/cam/knock/sensors (outputs disconnected) while the stock DME runs the car; logs show solid sync, correct RPM and sensible sensor values through drives |

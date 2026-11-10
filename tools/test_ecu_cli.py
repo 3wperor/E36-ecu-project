@@ -11,9 +11,8 @@ import ecu_cli  # noqa: E402
 
 class FramingTest(unittest.TestCase):
     def test_crc_matches_firmware(self):
-        # Same check value as firmware/test/test_main.c
         import zlib
-        self.assertEqual(zlib.crc32(b"123456789"), 0xCBF43926)
+        self.assertEqual(zlib.crc32(b"123456789"), 0xCBF43926)   # same check value as firmware tests
 
     def test_encode_matches_firmware_layout(self):
         f = ecu_cli.encode_frame(b"Q")
@@ -29,24 +28,59 @@ class FramingTest(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             ecu_cli.read_frame(io.BytesIO(b"").read)
 
-    def test_realtime_layout(self):
-        self.assertEqual(struct.calcsize(ecu_cli.RT_FORMAT), 50)   # sizeof(realtime_t)
-        raw = bytearray(50)
-        struct.pack_into("<I", raw, 0, 1234)
-        struct.pack_into("<H", raw, 32, 7200)
-        raw[36] = 3
-        raw[37] = 20
-        struct.pack_into("<H", raw, 44, 2)
-        raw[39] = 3
-        struct.pack_into("<H", raw, 46, 5)
-        rt = ecu_cli.parse_realtime(bytes(raw))
-        self.assertEqual((rt["uptime_ms"], rt["rpm"], rt["sync"], rt["cam_pos"], rt["cam_errors"],
-                          rt["out_enable"], rt["sched_late"]), (1234, 7200, 3, 20, 2, 3, 5))
 
+class RealtimeTest(unittest.TestCase):
+    def test_layout_from_definition(self):
+        d = ecu_cli.DEF
+        raw = bytearray(d["realtime_size"])
+        off = lambda n: ecu_cli.channel(n)["offset"]
+        struct.pack_into("<I", raw, off("uptime_ms"), 1234)
+        struct.pack_into("<H", raw, off("rpm"), 7200)
+        struct.pack_into("<H", raw, off("adc") + 2 * 3, 512)          # adcClt
+        struct.pack_into("<h", raw, off("clt"), -105)                 # -10.5 C
+        raw[off("sync")] = 3
+        rt = ecu_cli.parse_realtime(bytes(raw))
+        self.assertEqual((rt["uptime_ms"], rt["rpm"], rt["sync"], rt["adcClt"], rt["clt"]),
+                         (1234, 7200, 3, 512, -105))
+        self.assertAlmostEqual(ecu_cli.shown(ecu_cli.channel("clt"), rt["clt"]), -10.5)
+        self.assertIn("7200 rpm", ecu_cli.describe_realtime(rt))
+
+
+class TuneFieldTest(unittest.TestCase):
+    def page(self, name):
+        p, f = ecu_cli.find_field(name)
+        return p, f, bytearray(p["size"])
+
+    def test_scalar_roundtrip(self):
+        p, f, pg = self.page("revLimit")                  # U08 x100 rpm
+        b = ecu_cli.encode_field(f, "6500", pg[f["offset"]:f["offset"] + 1])
+        self.assertEqual(b, bytes([65]))
+        pg[f["offset"]] = b[0]
+        self.assertEqual(ecu_cli.decode_field(f, pg), 6500)
+
+    def test_translate_and_array(self):
+        p, f, pg = self.page("cylIgnTrim")                # U08 x0.5, translate -20
+        b = ecu_cli.encode_field(f, "0,1.5,-2,0,0,10", b"")
+        self.assertEqual(list(b), [20, 23, 16, 20, 20, 40])
+        pg[f["offset"]:f["offset"] + 6] = b
+        self.assertEqual(ecu_cli.decode_field(f, pg), [0, 1.5, -2, 0, 0, 10])
+        self.assertEqual(ecu_cli.encode_field(f, "1", b""), bytes([22] * 6))   # one value for all
+
+    def test_limits_and_options(self):
+        p, f, pg = self.page("revLimit")
+        with self.assertRaises(ValueError):
+            ecu_cli.encode_field(f, "12000", b"\x00")
+        p, f, pg = self.page("loadSource")
+        self.assertEqual(ecu_cli.encode_field(f, "alpha-n", b"\x00"), b"\x01")
+        pg[f["offset"]] = 2
+        self.assertEqual(ecu_cli.decode_field(f, pg), "Blend (table)")
+        with self.assertRaises(ValueError):
+            ecu_cli.find_field("boost")
+
+
+class BenchCfgTest(unittest.TestCase):
     def test_cfg(self):
         self.assertEqual(struct.calcsize(ecu_cli.CFG_FORMAT), 12)     # sizeof(sched_cfg_t)
-        # same bytes as the firmware host test (test_main.c): enable 3, advance 10.0°,
-        # dwell 3000 us, pw 2500 us, end of injection 380.0°, TDC offset 1.6°
         raw = bytes([3, 0, 0x10, 0x00, 100, 0, 0xB8, 0x0B, 0xC4, 0x09, 0xD8, 0x0E])
         c = ecu_cli.parse_cfg(raw)
         self.assertEqual(c, {"enable": 3, "spare": 0, "tdc_offset": 16, "advance": 100,

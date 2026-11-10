@@ -65,10 +65,20 @@ void sched_get_cfg(uint8_t *raw12)
     memcpy(raw12, &cfg, sizeof cfg);
 }
 
-void sched_update(uint8_t sync, uint16_t period4, uint32_t rev_ticks)
+uint8_t sched_test_active(void)
+{
+    return cfg.enable != 0;
+}
+
+void sched_test_input(sched_input_t *in)
+{
+    sched_input_from_cfg(&cfg, in);
+}
+
+void sched_update(uint8_t sync, uint16_t period4, uint32_t rev_ticks, const sched_input_t *in)
 {
     sched_slot_t slot[SCHED_CHANNELS];
-    sched_compute(&cfg, sync, period4, rev_ticks, slot);   /* divisions: outside atomic */
+    sched_compute(in, sync, period4, rev_ticks, slot);     /* divisions: outside atomic */
 
     uint8_t synced = sync >= SYNC_CRANK;
     for (uint8_t n = 0; n < SCHED_CHANNELS; n++) {

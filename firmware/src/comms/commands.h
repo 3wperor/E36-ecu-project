@@ -17,9 +17,14 @@
  *                             See decoder_core.h tooth_log_t.
  *   'P'  + 12 bytes           set output test config (sched_cfg_t); RANGE_ERR if invalid
  *   'p'  output test config   [12 bytes]
+ *   'R'  page, offset, count  read tune page bytes (all u16 little-endian)
+ *   'M'  page, offset, count, data   write tune page bytes in RAM (live)
+ *   'B'  page                 burn page to EEPROM (background; see realtime `engine` bit 6)
+ *   'D'  page                 restore the page's defaults in RAM
+ *   'O'  offset, count        realtime bytes (TunerStudio output channels)
  *
- * Page read/write/burn and the loggers arrive with the tune storage in
- * Phase 4, together with the generated TunerStudio .ini.
+ * 'R', 'M', 'B', 'O' are the commands named in the generated TunerStudio
+ * .ini (tuner/e36ecu.ini), framed with msEnvelope_1.0.
  */
 uint16_t commands_handle(const uint8_t *req, uint16_t req_len, uint8_t *resp);
 

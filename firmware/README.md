@@ -3,7 +3,7 @@
 Bare-metal C for the ATmega1280 (also builds for the pin-compatible ATmega2560).
 No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 
-## Status — Phases 1, 2 and 3 done in simulation
+## Status — Phases 1 to 4 done in simulation
 
 | Part | State |
 |------|-------|
@@ -12,15 +12,19 @@ No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 | UART0 interrupt ring buffers, 115200 baud | done |
 | Background ADC scan of 10 channels (~960 Hz each) | done |
 | Watchdog (60 ms) + reset-cause capture | done |
-| TunerStudio-style framing (length + payload + CRC32), commands `Q` `S` `A` `T` `P` `p` | done |
-| Cooperative main loop: 1 kHz / 100 Hz / 10 Hz / 1 Hz tasks | done (tasks are placeholders) |
+| TunerStudio-style framing (length + payload + CRC32), commands `Q` `S` `A` `O` `R` `M` `B` `D` `T` `P` `p` | done |
+| Cooperative main loop: 1 kHz / 100 Hz / 10 Hz / 1 Hz tasks | done |
 | Crank/cam decoder: 60-2 gap sync, cam phase (single pulse or half-moon), RPM, noise rejection, stall detection | done — see below |
 | Tooth logger (`T` command, one-shot 64-tooth capture) | done |
 | Injector/coil scheduling: 6 injectors + 6 coils on output-compare hardware, sequential / wasted spark, spark refinement, safety rules | done — see below |
-| Output test settings (`P`/`p`): advance, dwell, pulse width, end of injection, TDC offset; **off at power-up** | done (Phase 4 replaces them with tune tables) |
-| Fuel/ignition tables, sensors, tune storage | Phase 4 |
+| Bench output test (`P`/`p`): fixed advance, dwell, pulse width; overrides the engine calculation while on; **off at power-up** | done |
+| Tune layout generated from `definitions/ecu.toml` (pages, accessors, defaults, live data, TunerStudio ini) | done |
+| Tune storage: two pages in EEPROM, A/B slots with CRC, background burn, power-cut safe, defaults fallback | done |
+| Sensors: MAF curve, two TPS, CLT/IAT thermistor, battery, wideband, narrowbands, fault detection | done |
+| Engine maths: MAF / Alpha-N / blend load, fuel (AFR target, flow, warm-up, accel and after-start enrichment, cranking, dead time, cylinder trims, rev limiter), ignition (table, coolant and cylinder trims, cranking advance, dwell), end of injection, fuel pump | done — see below |
+| Closed-loop lambda, idle valve, VANOS, knock | Phases 5 and 9 |
 
-Current size: ~11.5 KB flash (9 %), ~2.2 KB RAM (27 %).
+Current size: ~21 KB flash (16 %), ~4.0 KB RAM (49 %) — RAM is the resource to watch.
 
 ### Decoder test results
 
@@ -114,6 +118,22 @@ Serial console at 115200 baud: `r3000` (set rpm, `r0` stops), `s800,7200,5000`
 (sweep 800→7200 rpm over 5 s), `c0|c1|c2` (cam none / single pulse / half-moon),
 `o40` (cam position in 3° steps), `d` (drop one tooth), `?` (status).
 
+### Engine maths and storage test results (Phase 4)
+
+`make test`:
+
+| Suite | What it checks |
+|-------|----------------|
+| `test_engine` | Sensors vs an NTC model (thermistor within 1.1 °C from −30 to 120 °C), two-TPS logic, faults and fallbacks; air mass vs a floating-point calculation (MAF 93.1 vs 93.3 mg, Alpha-N within 0.2 %); pulse width within 0.03 %; warm-up, blend, MAF trim, cylinder trims; cranking, after-start fade, rev-limit hysteresis, acceleration enrichment rise and fade; ignition table interpolation within 0.04°, coolant and cylinder trims, dwell, end of injection |
+| `test_storage` | Blank EEPROM → defaults; burn and reload; slot alternation; only changed bytes written; **power cut after each of the 239 writes of a burn → always the complete old or new tune**; corrupted slot → previous copy; different layout → defaults; edits during a burn |
+| `test_main` | Page read/write/burn/defaults and live-data commands, including every range error |
+| `tools/codegen/test_gen.py` | Generated files up to date; offsets contiguous; ini and C header match the layout; bad definitions rejected |
+
+`make sim-test` (real firmware in simavr): default tune at first boot; tune switched on over the
+protocol; at 3000 rpm the calculated pulse width matches an independent calculation within 0.1 % and the
+injectors and coils fire exactly the calculated pulse and dwell; `engine_update` costs ~0.9 ms per 10 ms
+(incl. interrupts); burn → power cycle (new chip, saved EEPROM) → the tune is still there.
+
 ### Bench-testing the outputs (Phase 3)
 
 With the trigger simulator driving the Mega, a logic analyser on the output pins shows the schedule:
@@ -143,7 +163,9 @@ python3 tools/ecu_cli.py /tmp/simavr-uart0 watch
 
 ## Testing notes
 
-- Portable modules (`comms/`, `decoder/`, `sched/`, later the engine maths) are unit-tested on the PC.
+- Portable modules (`comms/`, `decoder/`, `sched/`, `engine/`, `tune/`) are unit-tested on the PC.
+- simavr does not model the ATmega1280's ADC channels 8–15 (selected with MUX5), so the battery input
+  (ADC8) reads 0 V in simulation and the battery fault is expected there. Real silicon reads them.
 - simavr 1.6 does **not** model output-compare pins correctly in Normal timer mode
   (it also drives them at overflow). Tests that check hardware-timed outputs
   therefore capture the firmware's `TCCRnA`/`OCRnx` register writes, which define

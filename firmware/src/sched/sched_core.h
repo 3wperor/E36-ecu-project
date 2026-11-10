@@ -75,6 +75,7 @@
 
 #include <stdint.h>
 #include "decoder/decoder_core.h"
+#include "sched/sched_types.h"
 
 #define SCHED_INLINE static inline __attribute__((always_inline))
 
@@ -91,7 +92,6 @@
 
 #define SCHED_UNITS_TOOTH   256u
 #define SCHED_UNITS_CYCLE   (120u * SCHED_UNITS_TOOTH)   /* 30720 */
-#define SCHED_DEG10_CYCLE   7200u
 
 #define SCHED_LEAD_UNITS    128u     /* 0.5 tooth: reference tooth at least this far ahead */
 #define SCHED_MIN_LEAD      4u       /* 16 us: closest an edge is ever armed to "now" */
@@ -131,38 +131,6 @@ typedef struct {
     uint16_t armed;             /* starts armed (wraps) */
     uint16_t refined;           /* spark edges re-timed (wraps) */
 } sched_t;
-
-/* Test configuration (Phase 3). In Phase 4 the values come from the tune
- * tables; the mechanism stays the same. */
-typedef struct __attribute__((packed)) {
-    uint8_t  enable;            /* bit 0 ignition, bit 1 injection; 0 at power-up */
-    uint8_t  spare;
-    uint16_t tdc_offset;        /* cyl 1 compression TDC after decoder tooth 0, 0.1° */
-    int16_t  advance;           /* 0.1° BTDC */
-    uint16_t dwell_us;
-    uint16_t inj_pw_us;         /* per cycle; halved per revolution in CRANK sync */
-    uint16_t inj_end;           /* end of injection, 0.1° before compression TDC */
-} sched_cfg_t;                  /* 12 bytes */
-
-#define SCHED_EN_IGN 0x01
-#define SCHED_EN_INJ 0x02
-
-/* Limits enforced on the configuration. */
-#define SCHED_ADV_MIN      (-200)   /* 20° ATDC */
-#define SCHED_ADV_MAX      600      /* 60° BTDC */
-#define SCHED_DWELL_MIN    500u
-#define SCHED_DWELL_MAX    8000u    /* also hard max dwell */
-#define SCHED_PW_MAX       30000u
-
-SCHED_INLINE uint8_t sched_cfg_valid(const sched_cfg_t *c)
-{
-    return (c->enable & ~(SCHED_EN_IGN | SCHED_EN_INJ)) == 0
-        && c->tdc_offset < SCHED_DEG10_CYCLE
-        && c->advance >= SCHED_ADV_MIN && c->advance <= SCHED_ADV_MAX
-        && c->dwell_us >= SCHED_DWELL_MIN && c->dwell_us <= SCHED_DWELL_MAX
-        && c->inj_pw_us <= SCHED_PW_MAX
-        && c->inj_end < SCHED_DEG10_CYCLE;
-}
 
 /* ---------------------------------------------------------------- setup -- */
 
@@ -416,19 +384,26 @@ SCHED_INLINE uint32_t sched_ticks_to_units(uint32_t ticks, uint16_t period4, uin
     return (ticks * 1024u) / period4;
 }
 
+/* Signed 0.1 deg -> units */
+SCHED_INLINE int32_t sched_sdeg10_to_units(int16_t d)
+{
+    return d >= 0 ? (int32_t)sched_deg10_to_units((uint16_t)d) : -(int32_t)sched_deg10_to_units((uint16_t)-d);
+}
+
 /*
- * Compute all 12 channels from the configuration, period4 (sum of the last 4
- * tooth periods, ticks) and rev_ticks (last revolution, ticks; 0 = unknown).
- * Pure function, so the main loop can run it outside the atomic block and
- * then post the results.
+ * Compute all 12 channels from the input, period4 (sum of the last 4 tooth
+ * periods, ticks) and rev_ticks (last revolution, ticks; 0 = unknown). Out of
+ * range inputs are clamped. Pure function, so the main loop can run it
+ * outside the atomic block and then post the results.
  */
-SCHED_INLINE void sched_compute(const sched_cfg_t *cfg, uint8_t sync, uint16_t period4,
+SCHED_INLINE void sched_compute(const sched_input_t *in, uint8_t sync, uint16_t period4,
                                 uint32_t rev_ticks, sched_slot_t out[SCHED_CHANNELS])
 {
     for (uint8_t n = 0; n < SCHED_CHANNELS; n++) {
         sched_slot_off(&out[n]);
     }
-    if (sync < SYNC_CRANK || period4 == 0 || !sched_cfg_valid(cfg)) {
+    if (sync < SYNC_CRANK || period4 == 0 || !in->enable ||
+        in->tdc_offset >= SCHED_DEG10_CYCLE || in->inj_end >= SCHED_DEG10_CYCLE) {
         return;
     }
 
@@ -439,30 +414,25 @@ SCHED_INLINE void sched_compute(const sched_cfg_t *cfg, uint8_t sync, uint16_t p
     uint32_t period = sync == SYNC_FULL ? rev * 2u : rev;
 
     /* Dwell: time-based, as an angle at the current speed. */
-    uint32_t dwell = cfg->dwell_us / 4u;
+    uint16_t dwell_us = in->dwell_us > SCHED_DWELL_MAX ? SCHED_DWELL_MAX : in->dwell_us;
+    uint32_t dwell = dwell_us / 4u;
     if (dwell > period / 2) dwell = period / 2;                  /* never > half the period */
     if (dwell < SCHED_MIN_DUR) dwell = SCHED_MIN_DUR;
     uint32_t dwell_u = sched_ticks_to_units(dwell, period4, rev_ticks);
 
-    /* Injection: per revolution at half width in CRANK sync; duty <= 90 %. */
-    uint32_t pw = cfg->inj_pw_us / 4u;
-    if (sync != SYNC_FULL) pw /= 2u;
-    if (pw > period * 9u / 10u) pw = period * 9u / 10u;
-    uint32_t pw_u = sched_ticks_to_units(pw, period4, rev_ticks);
-
-    /* advance (may be negative) and end of injection, in units */
-    int32_t adv_u = cfg->advance >= 0 ? (int32_t)sched_deg10_to_units((uint16_t)cfg->advance)
-                                      : -(int32_t)sched_deg10_to_units((uint16_t)-cfg->advance);
-    uint16_t eoi_u = sched_deg10_to_units(cfg->inj_end);
+    uint16_t eoi_u = sched_deg10_to_units(in->inj_end);
 
     for (uint8_t c = 0; c < 6; c++) {
-        uint16_t tdc = (uint16_t)(cfg->tdc_offset + sched_tdc_rel[c]);
+        uint16_t tdc = (uint16_t)(in->tdc_offset + sched_tdc_rel[c]);
         if (tdc >= SCHED_DEG10_CYCLE) tdc = (uint16_t)(tdc - SCHED_DEG10_CYCLE);
         uint16_t tdc_u = sched_deg10_to_units(tdc);
 
-        if ((cfg->enable & SCHED_EN_IGN)) {
+        if ((in->enable & SCHED_EN_IGN)) {
+            int16_t adv = in->advance[c];
+            if (adv < SCHED_ADV_MIN) adv = SCHED_ADV_MIN;
+            if (adv > SCHED_ADV_MAX) adv = SCHED_ADV_MAX;
             sched_slot_t *o = &out[SCHED_IGN(c)];
-            uint16_t spark = sched_wrap_units((int32_t)tdc_u - adv_u);
+            uint16_t spark = sched_wrap_units((int32_t)tdc_u - sched_sdeg10_to_units(adv));
             /* start reference: dwell angle x 1.5 + 1 tooth before the spark */
             uint16_t margin = (uint16_t)(dwell_u + dwell_u / 2u + SCHED_UNITS_TOOTH);
             uint16_t start = sched_wrap_units((int32_t)spark - (int32_t)margin);
@@ -472,7 +442,12 @@ SCHED_INLINE void sched_compute(const sched_cfg_t *cfg, uint8_t sync, uint16_t p
             sched_to_ref(spark, &o->e_ref, &o->e_frac);
             o->dur = (uint16_t)dwell;
         }
-        if ((cfg->enable & SCHED_EN_INJ) && pw >= SCHED_MIN_DUR) {
+        /* Injection: per revolution at half width in CRANK sync; duty <= 90 %. */
+        uint32_t pw = in->pw_us[c] / 4u;
+        if (sync != SYNC_FULL) pw /= 2u;
+        if (pw > period * 9u / 10u) pw = period * 9u / 10u;
+        if ((in->enable & SCHED_EN_INJ) && pw >= SCHED_MIN_DUR) {
+            uint32_t pw_u = sched_ticks_to_units(pw, period4, rev_ticks);
             sched_slot_t *o = &out[SCHED_INJ(c)];
             uint16_t end_u = sched_wrap_units((int32_t)tdc_u - (int32_t)eoi_u);
             uint16_t start = sched_wrap_units((int32_t)end_u - (int32_t)pw_u);

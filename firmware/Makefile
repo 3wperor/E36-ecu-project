@@ -25,7 +25,9 @@ OBJCOPY := avr-objcopy
 SIZE    := avr-size
 
 BUILD   := build
-SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c) $(wildcard src/sched/*.c)
+SRC     := src/main.c $(wildcard src/hal/*.c) $(wildcard src/comms/*.c) $(wildcard src/decoder/*.c) \
+           $(wildcard src/sched/*.c) $(wildcard src/tune/*.c) $(wildcard src/engine/*.c) \
+           src/generated/tune_defaults.c
 OBJ     := $(SRC:%.c=$(BUILD)/%.o)
 
 CFLAGS  := -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -std=gnu11 -g \
@@ -36,6 +38,13 @@ LDFLAGS := -mmcu=$(MCU) -Wl,--gc-sections
 .PHONY: all flash test sim-test sim-pty clean size
 
 all: $(BUILD)/ecu.hex size
+
+# Generated sources (committed) are rebuilt when the definition changes.
+GENERATED := src/generated/tune_def.h src/generated/tune_defaults.c src/generated/realtime.h \
+             ../tuner/e36ecu.ini ../tuner/ecu_def.json
+$(GENERATED) &: ../definitions/ecu.toml ../tools/codegen/gen.py
+	python3 ../tools/codegen/gen.py
+$(OBJ): | $(GENERATED)
 
 # The decoder and scheduler ISRs are on the critical path: optimise them
 # for speed, not size.
@@ -74,10 +83,22 @@ $(BUILD)/test_sched: test/test_sched.c $(wildcard src/decoder/*.h src/sched/*.h)
 	@mkdir -p $(BUILD)
 	gcc $(HOST_CFLAGS) test/test_sched.c -lm -o $@
 
-test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched
+$(BUILD)/test_storage: test/test_storage.c src/comms/crc32.c src/generated/tune_defaults.c $(wildcard src/tune/*.h src/generated/*.h)
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_storage.c src/comms/crc32.c src/generated/tune_defaults.c -o $@
+
+$(BUILD)/test_engine: test/test_engine.c src/generated/tune_defaults.c $(wildcard src/engine/*.h src/generated/*.h)
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_engine.c src/generated/tune_defaults.c -lm -o $@
+
+test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/test_storage $(BUILD)/test_engine
+	python3 ../tools/codegen/gen.py --check
 	./$(BUILD)/host_tests
 	./$(BUILD)/test_decoder
 	./$(BUILD)/test_sched
+	./$(BUILD)/test_storage
+	./$(BUILD)/test_engine
+	cd .. && python3 -m unittest -q tools/codegen/test_gen.py tools/test_ecu_cli.py
 
 # ---- simavr end-to-end test ------------------------------------------------
 $(BUILD)/sim_test: test/sim_test.c src/comms/crc32.c ../tools/stim/pattern.h

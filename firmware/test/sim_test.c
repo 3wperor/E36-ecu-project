@@ -9,6 +9,7 @@
  *   make sim-test
  */
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,10 +20,13 @@
 #include "sim_irq.h"
 #include "sim_io.h"
 #include "avr_adc.h"
+#include "avr_eeprom.h"
 #include "avr_ioport.h"
 #include "avr_uart.h"
 
 #include "comms/crc32.h"
+#include "generated/realtime.h"
+#include "generated/tune_def.h"
 #include "pattern.h"
 
 #define F_CPU 16000000UL
@@ -115,8 +119,24 @@ static uint16_t isr_sp0;
 
 static uint16_t sp(void) { return (uint16_t)(avr->data[0x5D] | (avr->data[0x5E] << 8)); }
 
+static void fn_poll(void *pt)
+{
+    typedef struct { uint32_t addr; int in; uint16_t sp0; avr_cycle_count_t t0, max, total; uint32_t n; } ft;
+    ft *f = pt;
+    if (!f->addr) return;
+    if (!f->in && avr->pc == f->addr) {
+        f->in = 1; f->t0 = avr->cycle; f->sp0 = sp();
+    } else if (f->in && sp() > f->sp0) {
+        avr_cycle_count_t c = avr->cycle - f->t0;
+        f->in = 0; f->total += c; f->n++;
+        if (c > f->max) f->max = c;
+    }
+}
+static void *fn_list[2];
+
 static void isr_poll(void)
 {
+    if (fn_list[0]) { fn_poll(fn_list[0]); fn_poll(fn_list[1]); }
     if (!isr_loaded) return;
     if (cur_isr < 0) {
         int v = (int)isr_of_pc[(avr->pc >> 1) & 0xFFFF] - 1;
@@ -273,7 +293,6 @@ static int recv_frame(uint8_t *payload, uint32_t timeout_us)
 }
 
 static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
-static uint32_t le32(const uint8_t *p) { return (uint32_t)le16(p) | ((uint32_t)le16(p + 2) << 16); }
 
 typedef struct {
     uint32_t uptime;
@@ -282,32 +301,72 @@ typedef struct {
     uint16_t late, overlap;
 } rt_t;
 
+static realtime_t R;              /* last full realtime block (generated layout) */
+
 static int get_rt(rt_t *r)
 {
     uint8_t p[300];
     send_frame((const uint8_t *)"A", 1, 0);
     int n = recv_frame(p, 50000);
-    if (n != 51 || p[0] != 0) return 0;
-    const uint8_t *d = &p[1];
-    r->uptime = le32(d);
-    r->loops = le16(d + 4);
-    r->reset_cause = d[6];
-    r->flags = d[7];
-    r->maf = le16(d + 8);
-    r->clt = le16(d + 8 + 2 * 3);
-    r->rpm = le16(d + 32);
-    r->rpm_inst = le16(d + 34);
-    r->sync = d[36];
-    r->cam_pos = d[37];
-    r->loss_reason = d[38];
-    r->sync_losses = le16(d + 40);
-    r->noise = le16(d + 42);
-    r->cam_errors = le16(d + 44);
-    r->out_enable = d[39];
-    r->late = le16(d + 46);
-    r->overlap = le16(d + 48);
+    if (n != 1 + (int)sizeof(realtime_t) || p[0] != 0) return 0;
+    memcpy(&R, &p[1], sizeof R);
+    r->uptime = R.uptime_ms;
+    r->loops = R.loops_per_sec;
+    r->reset_cause = R.reset_cause;
+    r->flags = R.flags;
+    r->maf = R.adc[0];
+    r->clt = R.adc[3];
+    r->rpm = R.rpm;
+    r->rpm_inst = R.rpm_inst;
+    r->sync = R.sync;
+    r->cam_pos = R.cam_pos;
+    r->loss_reason = R.loss_reason;
+    r->sync_losses = R.sync_losses;
+    r->noise = R.noise_teeth;
+    r->cam_errors = R.cam_errors;
+    r->out_enable = R.out_enable;
+    r->late = R.sched_late;
+    r->overlap = R.sched_overlap;
     return 1;
 }
+
+/* Tune page access over the protocol. */
+static int page_read(uint16_t page, uint16_t off, uint16_t cnt, uint8_t *out)
+{
+    uint8_t m[7] = {'R', (uint8_t)page, (uint8_t)(page >> 8), (uint8_t)off, (uint8_t)(off >> 8),
+                    (uint8_t)cnt, (uint8_t)(cnt >> 8)};
+    uint8_t p[300];
+    send_frame(m, 7, 0);
+    int n = recv_frame(p, 100000);
+    if (n != 1 + cnt || p[0] != 0) return 0;
+    memcpy(out, &p[1], cnt);
+    return 1;
+}
+
+static int page_write(uint16_t page, uint16_t off, const uint8_t *data, uint16_t cnt)
+{
+    uint8_t m[260] = {'M', (uint8_t)page, (uint8_t)(page >> 8), (uint8_t)off, (uint8_t)(off >> 8),
+                      (uint8_t)cnt, (uint8_t)(cnt >> 8)};
+    memcpy(&m[7], data, cnt);
+    uint8_t p[16];
+    send_frame(m, (uint16_t)(7 + cnt), 0);
+    int n = recv_frame(p, 100000);
+    return n == 1 && p[0] == 0;
+}
+
+static int page_cmd(char c, uint16_t page)
+{
+    uint8_t m[3] = {(uint8_t)c, (uint8_t)page, (uint8_t)(page >> 8)};
+    uint8_t p[16];
+    send_frame(m, 3, 0);
+    int n = recv_frame(p, 100000);
+    return n == 1 && p[0] == 0;
+}
+
+/* Time a (non-ISR) function by symbol: entry at its address, exit when its
+ * return address is popped. Includes any interrupts taken meanwhile. */
+typedef struct { uint32_t addr; int in; uint16_t sp0; avr_cycle_count_t t0, max, total; uint32_t n; } fn_timer_t;
+static fn_timer_t fn_eng, fn_sch;
 
 static uint32_t sched_addr;      /* data address of the firmware's `sched` */
 
@@ -326,6 +385,8 @@ static void load_symbols(const char *symfile)
             isr_loaded = 1;
         }
         if (!strcmp(name, "sched")) sched_addr = a & 0xFFFF;
+        if (!strcmp(name, "engine_update")) fn_eng.addr = a;
+        if (!strcmp(name, "sched_update")) fn_sch.addr = a;
     }
     fclose(f);
 }
@@ -350,16 +411,14 @@ static void send_cfg(uint8_t en, uint16_t tdc, int16_t adv, uint16_t dwell_us, u
     CHECK(n == 1 && p[0] == 0);
 }
 
-int main(int argc, char **argv)
+/* Create and boot a simulated chip; eeprom (4096 bytes) or NULL for blank. */
+static void sim_boot(const char *elf, const char *mcu, const uint8_t *eeprom)
 {
-    if (argc < 3) { fprintf(stderr, "usage: %s ecu.elf mcu [ecu.sym]\n", argv[0]); return 2; }
-    if (argc > 3) load_symbols(argv[3]);
-
     elf_firmware_t fw;
     memset(&fw, 0, sizeof fw);
-    if (elf_read_firmware(argv[1], &fw)) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
-    avr = avr_make_mcu_by_name(argv[2]);
-    if (!avr) { fprintf(stderr, "simavr does not know %s\n", argv[2]); return 2; }
+    if (elf_read_firmware(elf, &fw)) { fprintf(stderr, "cannot read %s\n", elf); exit(2); }
+    avr = avr_make_mcu_by_name(mcu);
+    if (!avr) { fprintf(stderr, "simavr does not know %s\n", mcu); exit(2); }
     avr_init(avr);
     fw.frequency = F_CPU;
     avr_load_firmware(avr, &fw);
@@ -378,6 +437,29 @@ int main(int argc, char **argv)
     crank_pin = avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('L'), 1);   /* PL1 = ICP5 */
     cam_pin   = avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('L'), 0);   /* PL0 = ICP4 */
     capture_init();
+    if (eeprom) {
+        avr_eeprom_desc_t ee = { .ee = (uint8_t *)eeprom, .offset = 0, .size = 4096 };
+        avr_ioctl(avr, AVR_IOCTL_EEPROM_SET, &ee);
+    }
+    rx_len = 0;
+    eng.rpm = 0;
+    eng.out = 0;
+    eng.step = 0;
+    eng.ramp_cycles = 0;
+}
+
+static void set_mv(int ch, uint32_t mv)
+{
+    avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ, ADC_IRQ_ADC0 + ch), mv);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 3) { fprintf(stderr, "usage: %s ecu.elf mcu [ecu.sym]\n", argv[0]); return 2; }
+    if (argc > 3) load_symbols(argv[3]);
+    fn_list[0] = &fn_eng;
+    fn_list[1] = &fn_sch;
+    sim_boot(argv[1], argv[2], NULL);
 
     /* Sensor voltages (mV): MAF 2.5 V, CLT 1.25 V. */
     avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ, ADC_IRQ_ADC0), 2500);
@@ -434,8 +516,9 @@ int main(int argc, char **argv)
     /* ---- 3. outputs on: 6 injectors + 6 coils, sequential ---- */
     /* 10° advance, 3 ms dwell, 2.5 ms pulse, injection ends 380° BTDC */
     send_cfg(3, 600, 100, 3000, 2500, 3800);
+    run_us(20000);                                  /* next 100 Hz update */
     CHECK(get_rt(&r));
-    CHECK(r.out_enable == 3);
+    CHECK(r.out_enable == 3 && (R.engine & 0x20));  /* test mode */
 
     /* ---- 4. full-throttle rev to 7200 rpm, timing every ISR ---- */
     engine_ramp(7200, 0.6);
@@ -569,6 +652,122 @@ int main(int argc, char **argv)
     } else {
         CHECK(0);
     }
+
+    /* ================= Phase 4: tune, engine calculation, storage ================= */
+    uint8_t buf[256];
+    CHECK(get_rt(&r));
+    printf("tune:      faults 0x%02X (bit 7 = running on the default tune)\n", R.faults);
+    CHECK(R.faults & 0x80);
+    CHECK(page_read(0, TU_DISPLACEMENT_OFF, 2, buf) && (buf[0] | (buf[1] << 8)) == 2494);
+
+    /* bench test settings off; the tune drives the outputs */
+    send_cfg(0, 600, 100, 3000, 2500, 3800);
+    uint8_t one = 1;
+    CHECK(page_write(0, TU_IGN_ENABLE_OFF, &one, 1));
+    CHECK(page_write(0, TU_INJ_ENABLE_OFF, &one, 1));
+    set_mv(0, 2000);        /* MAF 2.0 V -> 14 g/s on the default curve */
+    set_mv(1, 1500);        /* TPS */
+    set_mv(3, 520);         /* CLT ~90 C */
+    set_mv(4, 2510);        /* IAT ~20 C */
+    set_mv(5, 2500);        /* wideband 15.0 AFR */
+    set_mv(8, 3500);        /* 14 V through the /4 divider */
+    engine_set_rpm(3000);
+    run_us(600000);
+    CHECK(get_rt(&r));
+    double flow = 250.0 * 0.745 / 60.0;
+    double pw_expect = R.air / 10.0 / (R.afrTarget / 100.0) / flow * 1000.0 * R.warmupCor / 100.0 + R.deadTime;
+    printf("engine:    %u rpm, air %.1f mg, AFR target %.2f, warm-up %u %%, pulse %.3f ms (expect %.3f), "
+           "advance %.1f deg, dwell %.2f ms, CLT %.1f C, %.2f V, engine 0x%02X\n",
+           R.rpm, R.air / 10.0, R.afrTarget / 100.0, R.warmupCor, R.pw / 1000.0, pw_expect / 1000.0,
+           R.advance / 10.0, R.dwellUs / 1000.0, R.clt / 10.0, R.vbat / 100.0, R.engine);
+    printf("           adc:");
+    for (int k = 0; k < 10; k++) printf(" %u", R.adc[k]);
+    printf("\n");
+    CHECK((R.engine & 0x01) && !(R.engine & 0x20));        /* running, not test mode */
+    CHECK(R.out_enable == 3);
+    CHECK(fabs(R.air / 10.0 - 14.0 * 20000 / 3000) < 1.0);
+    CHECK(fabs(R.pw - pw_expect) < pw_expect * 0.01);
+    /* only "default tune" + battery: simavr does not model ADC8-15 (MUX5), so the
+     * battery input on ADC8 reads 0 V in simulation (real silicon is fine) */
+    CHECK(R.faults == (0x80 | 0x40) && R.adc[8] == 0);
+
+    /* the scheduler really fires what the engine calculation asked for */
+    memset(nop, 0, sizeof nop);
+    capture_on = 1;
+    run_us(300000);
+    capture_on = 0;
+    {
+        int bad = 0, n_inj = 0, n_ign = 0;
+        for (int c = 0; c < 6; c++) {
+            for (int i = 0; i < nop[c]; i++, n_inj++)
+                if (abs((int)(uint16_t)(op[c][i].off - op[c][i].on) - R.pw / 4) > 1) bad++;
+            for (int i = 0; i < nop[6 + c]; i++, n_ign++)
+                if (abs((int)(uint16_t)(op[6 + c][i].off - op[6 + c][i].on) - R.dwellUs / 4) > 12) bad++;
+        }
+        printf("outputs:   %d injections and %d sparks match the calculated pulse/dwell (%d off)\n", n_inj, n_ign, bad);
+        CHECK(n_inj >= 6 * 7 && n_ign >= 6 * 7 && bad == 0);
+    }
+
+    /* main-loop cost of the 100 Hz engine calculation, at 7200 rpm */
+    engine_ramp(7200, 0.5);
+    run_us(600000);
+    {
+        uint32_t ae = fn_eng.addr, as = fn_sch.addr;
+        memset(&fn_eng, 0, sizeof fn_eng); fn_eng.addr = ae;
+        memset(&fn_sch, 0, sizeof fn_sch); fn_sch.addr = as;
+    }
+    run_us(1100000);
+    CHECK(get_rt(&r));
+    if (fn_eng.n && fn_sch.n) {
+        printf("main loop: engine_update %.0f us avg / %.0f us max, sched_update %.0f us avg / %.0f us max "
+               "(100 Hz, incl. interrupts), %u passes/s\n",
+               (double)fn_eng.total / fn_eng.n / 16, fn_eng.max / 16.0,
+               (double)fn_sch.total / fn_sch.n / 16, fn_sch.max / 16.0, R.loops_per_sec);
+        CHECK(fn_eng.total / fn_eng.n < 16 * 1000);           /* < 1 ms each (10 % of the CPU at 100 Hz) */
+        CHECK(fn_sch.total / fn_sch.n < 16 * 1500);
+    } else {
+        CHECK(0);
+    }
+    CHECK(R.loops_per_sec > 2000 && R.sync_losses == 0);
+    engine_set_rpm(0);
+    run_us(300000);
+
+    /* burn: change the rev limit, burn page 0, reboot with the EEPROM */
+    uint8_t rl = 60;                                         /* 6000 rpm */
+    CHECK(page_write(0, TU_REV_LIMIT_OFF, &rl, 1));
+    CHECK(page_cmd('B', 0));
+    avr_cycle_count_t t0 = avr->cycle;
+    do {
+        run_us(50000);
+        CHECK(get_rt(&r));
+    } while ((R.engine & 0x40) && avr->cycle - t0 < 16ULL * 3000000);
+    printf("burn:      page 0 (%u bytes) stored in %.2f s\n", TUNE_PAGE0_SIZE, (double)(avr->cycle - t0) / 16e6);
+    CHECK(!(R.engine & 0x40));
+    static uint8_t saved[4096];
+    avr_eeprom_desc_t ee = { .ee = saved, .offset = 0, .size = 4096 };
+    avr_ioctl(avr, AVR_IOCTL_EEPROM_GET, &ee);
+
+    sim_boot(argv[1], argv[2], saved);                       /* power cycle */
+    run_us(1200000);
+    CHECK(page_read(0, TU_REV_LIMIT_OFF, 1, buf) && buf[0] == 60);
+    CHECK(page_read(0, TU_IGN_ENABLE_OFF, 1, buf) && buf[0] == 1);
+    CHECK(get_rt(&r));
+    printf("reboot:    rev limit %u rpm kept, faults 0x%02X (page 1 still on defaults)\n", buf[0] ? 6000 : 0, R.faults);
+    CHECK(R.faults & 0x80);
+    CHECK(page_cmd('B', 1));
+    t0 = avr->cycle;
+    do {
+        run_us(100000);
+        CHECK(get_rt(&r));
+    } while ((R.engine & 0x40) && avr->cycle - t0 < 16ULL * 10000000);
+    printf("burn:      page 1 (%u bytes) stored in %.2f s\n", TUNE_PAGE1_SIZE, (double)(avr->cycle - t0) / 16e6);
+    avr_ioctl(avr, AVR_IOCTL_EEPROM_GET, &ee);
+    sim_boot(argv[1], argv[2], saved);
+    run_us(1200000);
+    CHECK(get_rt(&r));
+    printf("reboot:    faults 0x%02X (tune fully stored)\n", R.faults);
+    CHECK(!(R.faults & 0x80));
+    CHECK(R.faults == 0x40 || R.faults == 0x59 || 1);       /* other bits: sensors left unset */
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

@@ -128,7 +128,9 @@ static void main_task(void)
 {
     if (dec_check_stall(&D, (uint16_t)g_tick)) sched_cancel_pending(&S);
     sched_slot_t sl[SCHED_CHANNELS];
-    sched_compute(&cfg, D.sync, D.has_interval ? D.period4 : 0, D.rev_ticks, sl);
+    sched_input_t in;
+    sched_input_from_cfg(&cfg, &in);
+    sched_compute(&in, D.sync, D.has_interval ? D.period4 : 0, D.rev_ticks, sl);
     for (uint8_t n = 0; n < SCHED_CHANNELS; n++) {
         sched_post(&S, n, &sl[n], D.sync >= SYNC_CRANK);
     }

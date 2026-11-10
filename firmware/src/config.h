@@ -5,10 +5,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-/* Reported to the tuner. The signature changes whenever the tune/realtime
- * layout changes, so a tuner never writes to an ECU it does not understand. */
-#define ECU_SIGNATURE   "E36ECU-dev-p3"
-#define ECU_VERSION     "E36 ECU firmware 0.3.0 (phase 3: output scheduling)"
+/* ECU_SIGNATURE / ECU_VERSION come from definitions/ecu.toml. The signature
+ * changes whenever the tune/realtime layout changes, so a tuner never writes
+ * to an ECU it does not understand. */
+#include "generated/tune_def.h"
 
 /* Number of ADC channels scanned continuously (ADC0..ADC9, see board.h). */
 #define ADC_NUM_CH      10
