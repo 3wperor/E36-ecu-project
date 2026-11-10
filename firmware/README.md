@@ -82,6 +82,7 @@ make                         # build/ecu.hex for ATmega1280
 make MCU=atmega2560          # for a Mega 2560 board
 make test                    # host unit tests (CRC32, framing, commands)
 make sim-test                # boots the real firmware in simavr and talks to it over UART
+make tuner-test              # the tuner GUI (headless) against the firmware in simavr
 make flash PORT=/dev/ttyUSB0 # upload via the Arduino bootloader
 ```
 
@@ -159,6 +160,7 @@ the bench.
 ```sh
 cd firmware && make sim-pty RPM=3000 SECONDS=60 &      # simulated ECU + engine on /tmp/simavr-uart0
 python3 tools/ecu_cli.py /tmp/simavr-uart0 watch
+python3 tuner/run_tuner.py --port /tmp/simavr-uart0   # or the tuner (see ../tuner/README.md)
 ```
 
 ## Testing notes

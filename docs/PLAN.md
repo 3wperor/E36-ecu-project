@@ -481,7 +481,7 @@ both banks merge, so it sees all six cylinders. On one bank it only sees three.
 dialog and live-data channel. `tools/codegen/gen.py` generates:
 - `firmware/src/generated/`: page sizes, offsets and accessors, default tune (in flash), `realtime_t`;
 - `tuner/e36ecu.ini`: TunerStudio project definition;
-- `tuner/ecu_def.json`: layout for `tools/ecu_cli.py` and our own tuner,
+- `tuner/ecu_def.json`: layout, editor menus, gauges and default tune for `tools/ecu_cli.py` and our own tuner,
 so firmware and tools can never disagree about the layout. `make test` fails if a generated file is out of
 date. The firmware signature and a layout hash change with the layout: tune files and stored tunes from a
 different layout are refused.
@@ -513,6 +513,12 @@ enough that a later rewrite (C++/Qt, C#) would be straightforward if ever needed
 | T8 — Guided setup | Beginner-friendly wizards: sensor calibration (TPS min/max, thermistors), trigger offset with a timing light, injector setup, base tune generator from engine data |
 | T7 — Firmware | Flash firmware via bootloader (avrdude) from inside the app |
 
+**Implemented (Phase 4b): T1–T3** in `tuner/e36tuner/`, except the 3D table view. Layout: `definition.py`
+(the generated definition), `link.py` (protocol, retries), `tune.py` (edits, undo/redo, files, compare),
+`session.py` (serial traffic on a background thread), `fake_ecu.py` (demo ECU), and the Qt widgets
+(`dashboard.py`, `editors.py`, `compare.py`, `app.py`). Everything below the widgets has no Qt in it and is
+unit-tested; the GUI is tested headless against the demo ECU and against the real firmware in simavr.
+
 **Decided: TunerStudio as a fallback.** Since you're new to tuning, the first engine start shouldn't depend on
 brand-new GUI code. The generated `.ini` lets the free TunerStudio MS Lite (a mature, widely documented
 tuner) connect to our ECU from day one. Our own tuner is the main tool and grows milestone by milestone.
@@ -531,7 +537,7 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **2. Decoder** ✅ (in simulation) | Sync on the simulated engine | Correct tooth index, sync, RPM; sync survives acceleration ramps and lost/extra-tooth injection; tooth logger streams to PC; host unit tests replay captured car waveforms from Phase 0 |
 | **3. Scheduler** ✅ (in simulation) | Hardware-timed outputs | Logic analyser shows all 12 outputs at the right angle and duration across RPM sweep; jitter < 1 tick; wasted-spark → sequential transition; overdwell protection proven by yanking the trigger signal mid-dwell |
 | **4. Engine math + tune storage** ✅ (in simulation) | Tables drive outputs | Fuel and ignition from tables and sensors (pots on the bench); tune pages, EEPROM storage, TunerStudio .ini, command-line tune tools |
-| **4b. Tuner MVP** | Our own GUI | Tuner T1–T3: live gauges, edit tables, burn, save tune (PySide6) |
+| **4b. Tuner MVP** ✅ (in simulation) | Our own GUI | Tuner T1–T3: live gauges, edit tables, burn, save tune (PySide6). Tested against the firmware in simavr; the 3D table view is left for later (`tuner/README.md`) |
 | **5. Knock bench** | Knock chain works | TPIC8101 on a breadboard; injected 6.7 kHz bursts in the window are detected for the right cylinder, out-of-window ones ignored; knock logger in the tuner |
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |
 | **7. Sniffer mode on the car** | Validate decoder on the real engine with zero risk | Custom ECU wired **in parallel** to stock crank/cam/knock/sensors (outputs disconnected) while the stock DME runs the car; logs show solid sync, correct RPM and sensible sensor values through drives |

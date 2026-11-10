@@ -765,7 +765,16 @@
    "name": "rpm",
    "type": "U16",
    "offset": 32,
-   "units": "rpm"
+   "units": "rpm",
+   "gauge": [
+    0,
+    8000,
+    300,
+    600,
+    6500,
+    7200
+   ],
+   "log": true
   },
   {
    "name": "rpm_inst",
@@ -776,7 +785,8 @@
   {
    "name": "sync",
    "type": "U08",
-   "offset": 36
+   "offset": 36,
+   "log": true
   },
   {
    "name": "cam_pos",
@@ -796,7 +806,8 @@
   {
    "name": "sync_losses",
    "type": "U16",
-   "offset": 40
+   "offset": 40,
+   "log": true
   },
   {
    "name": "noise_teeth",
@@ -821,7 +832,8 @@
   {
    "name": "engine",
    "type": "U08",
-   "offset": 50
+   "offset": 50,
+   "log": true
   },
   {
    "name": "faults",
@@ -834,13 +846,23 @@
    "offset": 52,
    "units": "%",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "gauge": [
+    0,
+    100,
+    -1,
+    -1,
+    101,
+    101
+   ],
+   "log": true
   },
   {
    "name": "tpsDot",
    "type": "S16",
    "offset": 54,
-   "units": "%/s"
+   "units": "%/s",
+   "log": true
   },
   {
    "name": "clt",
@@ -848,7 +870,16 @@
    "offset": 56,
    "units": "C",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "gauge": [
+    -40,
+    130,
+    -20,
+    0,
+    105,
+    115
+   ],
+   "log": true
   },
   {
    "name": "iat",
@@ -856,7 +887,16 @@
    "offset": 58,
    "units": "C",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "gauge": [
+    -40,
+    100,
+    -20,
+    0,
+    50,
+    60
+   ],
+   "log": true
   },
   {
    "name": "vbat",
@@ -864,7 +904,16 @@
    "offset": 60,
    "units": "V",
    "scale": 0.01,
-   "digits": 2
+   "digits": 2,
+   "gauge": [
+    8,
+    16,
+    11,
+    12,
+    15,
+    15.5
+   ],
+   "log": true
   },
   {
    "name": "mafVolts",
@@ -872,7 +921,8 @@
    "offset": 62,
    "units": "V",
    "scale": 0.001,
-   "digits": 3
+   "digits": 3,
+   "log": true
   },
   {
    "name": "mafGs",
@@ -880,7 +930,16 @@
    "offset": 64,
    "units": "g/s",
    "scale": 0.01,
-   "digits": 2
+   "digits": 2,
+   "gauge": [
+    0,
+    200,
+    -1,
+    -1,
+    180,
+    190
+   ],
+   "log": true
   },
   {
    "name": "afr",
@@ -888,7 +947,16 @@
    "offset": 66,
    "units": "AFR",
    "scale": 0.01,
-   "digits": 2
+   "digits": 2,
+   "gauge": [
+    10,
+    20,
+    11,
+    11.5,
+    15.5,
+    16.5
+   ],
+   "log": true
   },
   {
    "name": "afrTarget",
@@ -896,19 +964,22 @@
    "offset": 68,
    "units": "AFR",
    "scale": 0.01,
-   "digits": 2
+   "digits": 2,
+   "log": true
   },
   {
    "name": "nbo2a",
    "type": "U16",
    "offset": 70,
-   "units": "mV"
+   "units": "mV",
+   "log": true
   },
   {
    "name": "nbo2b",
    "type": "U16",
    "offset": 72,
-   "units": "mV"
+   "units": "mV",
+   "log": true
   },
   {
    "name": "air",
@@ -916,7 +987,16 @@
    "offset": 74,
    "units": "mg",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "gauge": [
+    0,
+    700,
+    -1,
+    -1,
+    650,
+    680
+   ],
+   "log": true
   },
   {
    "name": "ve",
@@ -924,31 +1004,36 @@
    "offset": 76,
    "units": "%",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "log": true
   },
   {
    "name": "blend",
    "type": "U08",
    "offset": 78,
-   "units": "%"
+   "units": "%",
+   "log": true
   },
   {
    "name": "warmupCor",
    "type": "U08",
    "offset": 79,
-   "units": "%"
+   "units": "%",
+   "log": true
   },
   {
    "name": "aeCor",
    "type": "U08",
    "offset": 80,
-   "units": "%"
+   "units": "%",
+   "log": true
   },
   {
    "name": "asCor",
    "type": "U08",
    "offset": 81,
-   "units": "%"
+   "units": "%",
+   "log": true
   },
   {
    "name": "pw",
@@ -956,7 +1041,16 @@
    "offset": 82,
    "units": "ms",
    "scale": 0.001,
-   "digits": 3
+   "digits": 3,
+   "gauge": [
+    0,
+    25,
+    -1,
+    -1,
+    15,
+    20
+   ],
+   "log": true
   },
   {
    "name": "deadTime",
@@ -970,7 +1064,16 @@
    "name": "duty",
    "type": "U08",
    "offset": 86,
-   "units": "%"
+   "units": "%",
+   "gauge": [
+    0,
+    100,
+    -1,
+    -1,
+    80,
+    90
+   ],
+   "log": true
   },
   {
    "name": "advance",
@@ -978,7 +1081,16 @@
    "offset": 87,
    "units": "deg",
    "scale": 0.1,
-   "digits": 1
+   "digits": 1,
+   "gauge": [
+    -10,
+    50,
+    -5,
+    0,
+    40,
+    45
+   ],
+   "log": true
   },
   {
    "name": "dwellUs",
@@ -986,7 +1098,8 @@
    "offset": 89,
    "units": "ms",
    "scale": 0.001,
-   "digits": 2
+   "digits": 2,
+   "log": true
   },
   {
    "name": "eoi",
@@ -995,6 +1108,193 @@
    "units": "deg",
    "scale": 0.1,
    "digits": 1
+  }
+ ],
+ "version": "E36 ECU firmware 0.4.0 (phase 4: engine maths + tune storage)",
+ "defaults": {
+  "0": "be09fa00e9025064788ca0b4dc054c045203bc025802080200005064788ca0b48813a00f800cf00ac409fc0814141414141414283c5064781c1a18161414283c14283c5064788ca0803ee02e2823581b7c159411a00fac0d1e0f14283c50646e7882b4a08c7d706a6664050a14280a142332144114000000010264646464646400323c46505a646e78828ca0b4c8dcf0000096002c01f401ee021a0478053a076009ea0bd80ee015781e0429e8358845640098036400980300260035004a006a009a00e1004701ce016b0202037803c203aa9b8c7d6e5f504132231405900164c865",
+  "1": "05080b0e1114191e23282d32373c414800020406080a0e141a222c3c506e96c8320050006e008c00aa00c800f0001801400168019001b801e0010802300258021e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1f202021222222212120202728292a2b2c2d2e2f303131302f2e2d3233343537383a3b3c3d3f3e3d3c3b3a3c3d3e404143454648494b4a494746454d4e50525355585a5c5e605e5d5b5a5860626467696b6e71737678767573716e6f717476797b7f8285878a888684827f7c7f8285878a8f9295989b999794928f878a8d9093969b9fa2a6a9a6a4a19f9b9094979a9da1a6aaadb1b5b2afadaaa695999c9fa3a6acafb3b7bbb8b5b2afac979b9ea2a5a8aeb2b6b9bdbab8b5b2ae989b9fa2a6a9afb3b6babebbb8b5b3af989b9fa2a6a9afb3b6babebbb8b6b3af64646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464648e8e93939393939393939393939393938e8e93939393939393939393939393938e8e93939393939393939393939393938e8e9393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393939393909090909090909090909090909090908c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8888888888888888888888888888888884848484848484848484848484848484818181818181818181818181818181817e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e383d424a51585e646668696a6b6c6c6c383d424a51585e646668696a6b6c6c6c383d424a51585e646668696a6b6c6c6c383d424a51585e646668696a6b6c6c6c383c424950575d63656768696a6b6b6b373b41474e555a606365666768696969363a3f454c52585d606264656667676736393d43494f555a5d6061636465656535383c41474c52575a5d5f606263636334373a40454a4f54585b5c5e606161613436393e42474c5155585a5c5d5f5f5f3335373c4044494e525658595b5d5d5d3234363a3e41464b4f535557595b5b5b323335393c40454a4e525456585a5a5a323335393c40454a4e525456585a5a5a323335393c40454a4e525456585a5a5a080f19232d37414850009600dc0022016801ae01f4013a027f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e7f7f7f7f7c77726e"
+ },
+ "tables": [
+  {
+   "name": "afrTbl",
+   "title": "AFR target",
+   "menu": "Fuel",
+   "x": "rpmBins",
+   "y": "loadBins",
+   "z": "afrTable",
+   "xchan": "rpm",
+   "ychan": "air"
+  },
+  {
+   "name": "veTbl",
+   "title": "Alpha-N VE",
+   "menu": "Fuel",
+   "x": "rpmBins",
+   "y": "tpsBins",
+   "z": "veTable",
+   "xchan": "rpm",
+   "ychan": "tps"
+  },
+  {
+   "name": "blendTbl",
+   "title": "MAF / Alpha-N blend",
+   "menu": "Fuel",
+   "x": "rpmBins",
+   "y": "tpsBins",
+   "z": "blendTable",
+   "xchan": "rpm",
+   "ychan": "tps"
+  },
+  {
+   "name": "mafTrimTbl",
+   "title": "MAF trim",
+   "menu": "Fuel",
+   "x": "rpmBins",
+   "y": "tpsBins",
+   "z": "mafTrim",
+   "xchan": "rpm",
+   "ychan": "tps"
+  },
+  {
+   "name": "eoiTbl",
+   "title": "End of injection",
+   "menu": "Fuel",
+   "x": "eoiRpm",
+   "y": "eoiLoad",
+   "z": "eoiTable",
+   "xchan": "rpm",
+   "ychan": "air"
+  },
+  {
+   "name": "ignTbl",
+   "title": "Ignition advance",
+   "menu": "Ignition",
+   "x": "rpmBins",
+   "y": "loadBins",
+   "z": "ignTable",
+   "xchan": "rpm",
+   "ychan": "air"
+  }
+ ],
+ "curves": [
+  {
+   "name": "injDeadCurve",
+   "title": "Injector dead time",
+   "menu": "Fuel",
+   "x": "injDeadV",
+   "y": "injDead"
+  },
+  {
+   "name": "crankPwCurve",
+   "title": "Cranking pulse width",
+   "menu": "Fuel",
+   "x": "crankPwT",
+   "y": "crankPw"
+  },
+  {
+   "name": "warmupCurve",
+   "title": "Warm-up enrichment",
+   "menu": "Fuel",
+   "x": "warmupT",
+   "y": "warmup"
+  },
+  {
+   "name": "aeCurve",
+   "title": "Acceleration enrichment",
+   "menu": "Fuel",
+   "x": "aeRate",
+   "y": "aeAdd"
+  },
+  {
+   "name": "dwellCurve",
+   "title": "Dwell",
+   "menu": "Ignition",
+   "x": "dwellV",
+   "y": "dwell"
+  },
+  {
+   "name": "cltAdvCurve",
+   "title": "Coolant timing trim",
+   "menu": "Ignition",
+   "x": "cltAdvT",
+   "y": "cltAdv"
+  },
+  {
+   "name": "mafCurve",
+   "title": "MAF transfer curve",
+   "menu": "Sensors",
+   "x": "mafV",
+   "y": "mafFlow"
+  },
+  {
+   "name": "thermCurve",
+   "title": "Thermistor (CLT / IAT)",
+   "menu": "Sensors",
+   "x": "thermAdc",
+   "y": "thermC"
+  }
+ ],
+ "dialogs": [
+  {
+   "name": "engineDlg",
+   "title": "Engine and injectors",
+   "menu": "Fuel",
+   "fields": [
+    "displacement",
+    "injFlow",
+    "fuelDensity",
+    "loadSource",
+    "injEnable",
+    "revLimit",
+    "revHyst",
+    "fuelPumpPrime"
+   ]
+  },
+  {
+   "name": "startDlg",
+   "title": "Cranking and after-start",
+   "menu": "Fuel",
+   "fields": [
+    "crankRpm",
+    "crankAdvance",
+    "afterStart",
+    "afterStartTime"
+   ]
+  },
+  {
+   "name": "aeDlg",
+   "title": "Acceleration enrichment",
+   "menu": "Fuel",
+   "fields": [
+    "aeTime"
+   ]
+  },
+  {
+   "name": "ignDlg",
+   "title": "Ignition",
+   "menu": "Ignition",
+   "fields": [
+    "ignEnable",
+    "tdcOffset",
+    "camEnable"
+   ]
+  },
+  {
+   "name": "sensorDlg",
+   "title": "Sensors",
+   "menu": "Sensors",
+   "fields": [
+    "tpsCount",
+    "tps1Min",
+    "tps1Max",
+    "tps2Min",
+    "tps2Max",
+    "vbatScale",
+    "afrAt0V",
+    "afrAt5V",
+    "baro"
+   ]
   }
  ]
 }

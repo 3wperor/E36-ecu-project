@@ -1,14 +1,62 @@
 # Tuning
 
-Two ways to tune the ECU today; our own GUI (Phase 4b) comes next.
+Three ways to tune the ECU: **our own tuner** (below), TunerStudio, and the command-line tool.
 
-Both files in this folder are **generated** from `definitions/ecu.toml` by
-`tools/codegen/gen.py`. Don't edit them by hand.
+The files `e36ecu.ini` and `ecu_def.json` in this folder are **generated** from
+`definitions/ecu.toml` by `tools/codegen/gen.py`. Don't edit them by hand.
 
 | File | Used by |
 |------|---------|
 | `e36ecu.ini` | TunerStudio |
-| `ecu_def.json` | `tools/ecu_cli.py` and our own tuner |
+| `ecu_def.json` | our tuner (`e36tuner/`) and `tools/ecu_cli.py` |
+
+## Our tuner (`e36tuner/`)
+
+![The tuner connected to the demo ECU](../docs/img/tuner.png)
+
+```sh
+pip install -r tuner/requirements.txt        # PySide6, pyqtgraph, pyserial (developed on Python 3.13)
+python3 tuner/run_tuner.py                   # start; choose the port and press Connect
+python3 tuner/run_tuner.py --demo            # no hardware: a pretend ECU and engine inside the program
+python3 tuner/run_tuner.py --port /dev/ttyACM0 my.tune
+```
+
+What it does (plan milestones T1–T3):
+
+- **Connect and view.** Serial connect with a firmware check (a firmware from another version is
+  refused with a clear message), gauges with warning zones, status lights (sync, running, rev
+  limit, outputs on, burning), sensor faults, error counters and a numeric list of the live data.
+- **Edit.** Every setting, grouped as in TunerStudio (Fuel / Ignition / Sensors). Tables are
+  heat-map coloured with the highest load at the top; the outlined cell is where the engine is
+  running now. Select a block and: type a number, `+` / `-` (one step; Ctrl = ten), `*` scale by
+  %, `I` interpolate (follows the axis spacing), `S` smooth, Ctrl+C / Ctrl+V to and from a
+  spreadsheet. Axis bins are edited in the same grid. Curves have a plot beside the numbers.
+  Unlimited undo / redo.
+- **Live write and burn.** Every edit (and every undo) goes to the ECU's working memory straight
+  away. **Burn** stores it in the EEPROM; until then the status bar says the changes are not
+  burned. Before burning, the tuner checks that the ECU really holds the tune shown.
+- **Tune files.** Save / open (the same JSON format as `tools/ecu_cli.py`), edit offline with no
+  ECU, compare with another tune file (list of differences, cell-by-cell grid, copy settings
+  across). A file saved by a different firmware layout is imported by setting name, with a
+  report of anything that could not be carried over.
+
+Things worth knowing:
+
+- Opening the port restarts an Arduino Mega; connecting takes about 2 seconds.
+- If the tune in the ECU differs from the one open in the tuner, you are asked which one to keep.
+- Switching `ignEnable` / `injEnable` on while connected, or loading a file that has them on, asks
+  first: with real coils or injectors wired up they are driven as soon as the engine turns.
+- If the link drops, the tuner goes offline and keeps your tune; reconnect to carry on.
+- The demo ECU is a toy model for trying the program. Its numbers follow the tune but are **not**
+  the firmware's maths.
+
+Not in this version: a 3D surface view of tables, datalogging and the log viewer (T4), tooth /
+knock views and the output test panel (T5; use `tools/ecu_cli.py` for those today), auto-tune
+(T6), firmware flashing (T7).
+
+**Tested** with the built-in demo ECU and against the real firmware running in the simavr
+simulator (`make test` and `make tuner-test` in `firmware/`), without a display. **Not yet tested**
+on a real board, or by hand on Windows / macOS.
 
 ## TunerStudio
 

@@ -5,6 +5,7 @@
 #   make flash PORT=/dev/ttyUSB0
 #   make test            host-side unit tests (native gcc)
 #   make sim-test        boot the firmware in simavr and talk to it over UART
+#   make tuner-test      the tuner GUI against the firmware in simavr
 
 MCU    ?= atmega1280
 F_CPU  ?= 16000000UL
@@ -35,7 +36,7 @@ CFLAGS  := -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -std=gnu11 -g \
            -ffunction-sections -fdata-sections -Isrc
 LDFLAGS := -mmcu=$(MCU) -Wl,--gc-sections
 
-.PHONY: all flash test sim-test sim-pty clean size
+.PHONY: all flash test sim-test sim-pty tuner-test clean size
 
 all: $(BUILD)/ecu.hex size
 
@@ -99,6 +100,11 @@ test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/tes
 	./$(BUILD)/test_storage
 	./$(BUILD)/test_engine
 	cd .. && python3 -m unittest -q tools/codegen/test_gen.py tools/test_ecu_cli.py
+	cd ../tuner && QT_QPA_PLATFORM=offscreen python3 -m unittest -q tests.test_core tests.test_gui
+
+# The tuner (GUI included) against the real firmware in simavr, over a pseudo-terminal.
+tuner-test: $(BUILD)/ecu.elf $(BUILD)/sim_pty
+	cd ../tuner && QT_QPA_PLATFORM=offscreen python3 -m unittest -q tests.test_firmware
 
 # ---- simavr end-to-end test ------------------------------------------------
 $(BUILD)/sim_test: test/sim_test.c src/comms/crc32.c ../tools/stim/pattern.h

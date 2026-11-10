@@ -244,16 +244,21 @@ def gen_tune_h(d, pages):
     return "\n".join(L)
 
 
+def page_default_bytes(p):
+    raw = []
+    for f in p["fields"]:
+        size = TYPES[f["type"]][0]
+        for v in f["raw_default"]:
+            v &= (1 << (8 * size)) - 1
+            raw += [(v >> (8 * k)) & 0xFF for k in range(size)]
+    assert len(raw) == p["size"]
+    return raw
+
+
 def gen_tune_c(pages):
     L = [f"/* {HEADER} */", '#include "generated/tune_def.h"', ""]
     for p in pages:
-        raw = []
-        for f in p["fields"]:
-            size = TYPES[f["type"]][0]
-            for v in f["raw_default"]:
-                v &= (1 << (8 * size)) - 1
-                raw += [(v >> (8 * k)) & 0xFF for k in range(size)]
-        assert len(raw) == p["size"]
+        raw = page_default_bytes(p)
         L.append(f"const uint8_t tune_default_page{p['id']}[TUNE_PAGE{p['id']}_SIZE] TUNE_FLASH = {{")
         for i in range(0, len(raw), 16):
             L.append("    " + ", ".join(f"0x{b:02X}" for b in raw[i:i + 16]) + ",")
@@ -456,7 +461,14 @@ def gen_json(d, pages):
                    "fields": [{k: f[k] for k in keep if k in f} for f in p["fields"]]} for p in pages],
         "realtime_size": d["rt_size"],
         "channels": [{k: c[k] for k in ("name", "type", "offset", "shape", "names", "units", "scale",
-                                        "translate", "digits") if k in c} for c in d["channels"]],
+                                        "translate", "digits", "gauge", "log") if k in c}
+                     for c in d["channels"]],
+        # for our own tuner: version, default tune (offline editing) and the editor layout
+        "version": d["meta"]["version"],
+        "defaults": {str(p["id"]): bytes(page_default_bytes(p)).hex() for p in pages},
+        "tables": d.get("tables", []),
+        "curves": d.get("curves", []),
+        "dialogs": d.get("dialogs", []),
     }
     return json.dumps(out, indent=1) + "\n"
 

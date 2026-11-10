@@ -10,7 +10,7 @@ and a custom desktop tuning application.
 
 - Firmware build/test/flash and trigger simulator wiring: [firmware/README.md](firmware/README.md)
 
-Status: Phases 1–4 (foundations, trigger simulator, crank/cam decoder, injector/coil scheduling, engine maths and tune storage) done in simulation.
+Status: Phases 1–4 (foundations, trigger simulator, crank/cam decoder, injector/coil scheduling, engine maths and tune storage) and 4b (our own tuner: live data, table editing, burn, tune files) done in simulation.
 
-- Tuning (TunerStudio and the command-line tool): [tuner/README.md](tuner/README.md)
+- Tuning (our tuner, TunerStudio and the command-line tool): [tuner/README.md](tuner/README.md)
 - Tune layout (single source of truth): [definitions/ecu.toml](definitions/ecu.toml)
