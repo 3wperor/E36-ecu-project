@@ -44,6 +44,11 @@ class RealtimeTest(unittest.TestCase):
                          (1234, 7200, 3, 512, -105))
         self.assertAlmostEqual(ecu_cli.shown(ecu_cli.channel("clt"), rt["clt"]), -10.5)
         self.assertIn("7200 rpm", ecu_cli.describe_realtime(rt))
+        struct.pack_into("<h", raw, off("lambdaTrimA"), -84)          # -8.4 %
+        raw[off("engine2")] = 0x14                                    # VANOS + closed loop
+        line = ecu_cli.describe_realtime(ecu_cli.parse_realtime(bytes(raw)))
+        self.assertIn("trim  -8.4/ +0.0%", line)
+        self.assertIn("VANOS CL", line)
 
 
 class KnockViewTest(unittest.TestCase):

@@ -484,6 +484,15 @@ static void on_hold(struct avr_irq_t *irq, uint32_t v, void *p)
     fake_out_n = 0;
 }
 
+static uint32_t tach_rises, tach_level;
+static void on_tach(struct avr_irq_t *irq, uint32_t v, void *p)
+{
+    (void)irq; (void)p;
+    v = !!v;
+    if (v && !tach_level) tach_rises++;
+    tach_level = v;
+}
+
 static void on_spi(struct avr_irq_t *irq, uint32_t v, void *p)
 {
     (void)irq; (void)p;
@@ -522,6 +531,7 @@ static void sim_boot(const char *elf, const char *mcu, const uint8_t *eeprom)
     spi_in = avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_INPUT);
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_OUTPUT), on_spi, NULL);
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('C'), 2), on_hold, NULL);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), 5), on_tach, NULL);
     fake_channel = -1;
     fake_out_n = 2;
     if (eeprom) {
@@ -648,7 +658,7 @@ int main(int argc, char **argv)
         CHECK(isr_max[46] <= 1120);                        /* worst 70 us */
         CHECK(oc_count > 2 * 12 * 55);       /* 2 edges x 12 channels x 60 cycles/s */
         CHECK(oc_max <= 160);                /* 10 us */
-        CHECK(100.0 * (double)all / (double)window < 25.0);
+        CHECK(100.0 * (double)all / (double)window < 27.0);   /* regression guard, PLAN.md 3.6 */
     } else {
         printf("ISR timing: symbols not found\n");
         CHECK(0);
@@ -810,7 +820,7 @@ int main(int argc, char **argv)
                "(100 Hz, incl. interrupts), %u passes/s\n",
                (double)fn_eng.total / fn_eng.n / 16, fn_eng.max / 16.0,
                (double)fn_sch.total / fn_sch.n / 16, fn_sch.max / 16.0, R.loops_per_sec);
-        CHECK(fn_eng.total / fn_eng.n < 16 * 1000);           /* < 1 ms each (10 % of the CPU at 100 Hz) */
+        CHECK(fn_eng.total / fn_eng.n < 16 * 1200);           /* < 1.2 ms each incl. interrupts (PLAN.md 3.6) */
         CHECK(fn_sch.total / fn_sch.n < 16 * 1500);
     } else {
         CHECK(0);
@@ -959,6 +969,90 @@ int main(int argc, char **argv)
     CHECK(kst.n == n0 && R.knockState == 0);
     for (int c = 0; c < 6; c++) CHECK(R.knockRetard[c] == 0);
     engine_set_rpm(0);
+
+    /* ================= Phase 9a: tach, idle valve, VANOS, overrun cut, lambda ================= */
+    uint8_t zero = 0;
+    CHECK(page_write(0, TU_LAMBDA_DELAY_OFF, &zero, 1));    /* no 30 s wait in the simulation */
+    set_mv(0, 2000);                                       /* light load (~93 mg at 3000 rpm) */
+    set_mv(1, 1500);                                       /* throttle ~25 % */
+    set_mv(3, 520);                                        /* warm */
+    set_mv(5, 2350);                                       /* wideband 14.7 */
+    engine_set_rpm(3000);
+    run_us(600000);
+    tach_rises = 0;
+    run_us(1000000);
+    uint32_t tach_1s = tach_rises;                         /* before the UART exchange runs the clock on */
+    CHECK(get_rt(&r));
+    uint8_t pa = avr->data[0x22];                          /* PORTA */
+    uint8_t ocr2a = avr->data[0xB3], tccr2a = avr->data[0xB0];
+    printf("aux:       tach %u pulses in 1 s at 3000 rpm (expect 150), VANOS pin %d, heaters %d, "
+           "idle valve %u %% (OCR2A %u, TCCR2A 0x%02X), engine2 0x%02X\n",
+           tach_1s, !!(pa & 0x04), !!(pa & 0x08), R.iacDuty, ocr2a, tccr2a, R.engine2);
+    CHECK(tach_1s >= 149 && tach_1s <= 151);
+    CHECK((pa & 0x04) && (R.engine2 & 0x04));              /* VANOS on: 3000 rpm, 25 % throttle */
+    CHECK(abs((int)ocr2a - (int)(R.iacDuty * 255 + 50) / 100) <= 1);
+    CHECK((tccr2a & 0xF0) == 0xB0);                        /* OC2A non-inverted, OC2B inverted */
+    CHECK(R.iacDuty >= 25 && R.iacDuty <= 40);
+
+    /* overrun: throttle shut at 3000 rpm -> injectors stop after 0.5 s */
+    set_mv(1, 300);
+    run_us(700000);
+    memset(nop, 0, sizeof nop);
+    capture_on = 1;
+    run_us(200000);
+    capture_on = 0;
+    CHECK(get_rt(&r));
+    int inj = 0;
+    for (int c = 0; c < 6; c++) inj += nop[c];
+    printf("overrun:   engine2 0x%02X, injections in 0.2 s: %d, VANOS pin %d\n", R.engine2, inj, !!(avr->data[0x22] & 0x04));
+    CHECK((R.engine2 & 0x02) && inj == 0 && R.pw == 0);
+    CHECK(!(avr->data[0x22] & 0x04));                      /* VANOS off: throttle shut */
+
+    /* wideband closed loop: the engine reads lean (16.0) -> fuel added up to the limit */
+    set_mv(1, 1500);
+    uint8_t two = 2;
+    CHECK(page_write(0, TU_LAMBDA_MODE_OFF, &two, 1));
+    run_us(300000);
+    CHECK(get_rt(&r));
+    uint16_t pw_open = R.pw;
+    set_mv(5, 3000);                                       /* 16.0 AFR on a 10-20 AFR / 0-5 V wideband */
+    run_us(3000000);
+    CHECK(get_rt(&r));
+    printf("lambda:    wideband reads 16.0 vs 14.7 target -> trim %+.1f %% / %+.1f %%, pulse %.3f -> %.3f ms\n",
+           R.lambdaTrimA / 10.0, R.lambdaTrimB / 10.0, pw_open / 1000.0, R.pw / 1000.0);
+    CHECK((R.engine2 & 0x10) && R.lambdaTrimA >= 100 && R.lambdaTrimA == R.lambdaTrimB);
+    CHECK(R.pw > pw_open + (pw_open - R.deadTime) / 12);
+
+    /* narrowband per bank: bank A rich, bank B lean -> opposite trims, seen in the injector pulses */
+    uint8_t one_nb = 1;
+    CHECK(page_write(0, TU_LAMBDA_MODE_OFF, &one_nb, 1));
+    set_mv(5, 2350);
+    set_mv(6, 800);                                        /* bank A (cyl 1-3) rich */
+    set_mv(7, 100);                                        /* bank B (cyl 4-6) lean */
+    run_us(3000000);
+    memset(nop, 0, sizeof nop);
+    capture_on = 1;
+    run_us(200000);
+    capture_on = 0;
+    CHECK(get_rt(&r));
+    double pa_us = 0, pb_us = 0;
+    int na = 0, nb = 0;
+    for (int c = 0; c < 6; c++)
+        for (int i = 0; i < nop[c]; i++) {
+            double d = (uint16_t)(op[c][i].off - op[c][i].on) * 4.0;
+            if (c < 3) { pa_us += d; na++; } else { pb_us += d; nb++; }
+        }
+    printf("lambda:    narrowband A rich / B lean -> trim %+.1f %% / %+.1f %%, injector pulses %.3f / %.3f ms\n",
+           R.lambdaTrimA / 10.0, R.lambdaTrimB / 10.0, na ? pa_us / na / 1000 : 0, nb ? pb_us / nb / 1000 : 0);
+    /* 2 % step + 2 %/s ramp for ~3 s: about -8 % / +6 % (B starts on the lean side) */
+    CHECK(R.lambdaTrimA <= -60 && R.lambdaTrimB >= 50);
+    CHECK(R.engine2 & 0x40 && !(R.engine2 & 0x80));        /* NB A rich, B lean */
+    /* (1 - 8 %) / (1 + 6 %) on the opening time; the dead time is not trimmed */
+    CHECK(na > 0 && nb > 0 && pa_us / na < pb_us / nb * 0.95);
+    engine_set_rpm(0);
+    run_us(300000);
+    CHECK(get_rt(&r));
+    CHECK(!(avr->data[0x22] & 0x20) && R.engine2 == 0);    /* tach low, everything off */
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

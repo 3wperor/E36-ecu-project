@@ -30,7 +30,8 @@
 #define SPI_MOSI PB2
 
 uint8_t knock_act[120];                 /* window table, read by the crank ISR */
-volatile uint8_t knock_pending;         /* cylinder + 1 whose window just closed */
+volatile uint8_t knock_pending;         /* cylinder + 1 whose window just closed (| 0x80: not integrated) */
+static volatile uint8_t chip_ch = 0xFF; /* sensor the chip is switched to (0xFF unknown) */
 static volatile uint8_t armed;          /* windows run (enabled, configured, full sync) */
 
 static knock_t kn;
@@ -88,14 +89,18 @@ ISR(SPI_STC_vect)
 void knock_tooth_events(uint8_t a)
 {
     if (knock_pending) {
-        uint8_t cyl = (uint8_t)(knock_pending - 1u);
+        uint8_t p = knock_pending;
+        uint8_t cyl = (uint8_t)((p & 0x7Fu) - 1u);
         knock_pending = 0;
         if (!xbusy) {
             /* switch to the next firing cylinder's sensor; the bytes clocked
-             * back are this window's level */
-            tx[0] = TPIC_CHANNEL(knock_channel(knock_next_cyl[cyl]));
+             * back are this window's level (thrown away if the window was
+             * skipped because the chip was on the other sensor) */
+            uint8_t ch = knock_channel(knock_next_cyl[cyl]);
+            tx[0] = TPIC_CHANNEL(ch);
             tx[1] = TPIC_GAIN(tu_knockGain());
-            xfer_start(XFER_RESULT, 2, cyl);
+            xfer_start((p & 0x80u) ? XFER_CONFIG : XFER_RESULT, 2, cyl);
+            chip_ch = ch;
         } else {
             res_skipped++;
         }
@@ -105,10 +110,13 @@ void knock_tooth_events(uint8_t a)
         return;
     }
     if (a & KNOCK_OPEN) {
-        hold_high();                    /* integrate */
+        /* integrate, unless the chip listens to the wrong sensor (first
+         * window after arming, or a skipped channel switch) */
+        if (chip_ch == knock_channel(a & KNOCK_CYL)) hold_high();
     } else if (a & KNOCK_CLOSE) {
+        uint8_t integrated = (AUX2_PORT & (1 << AUX2_KNOCK_HOLD)) != 0;
         hold_low();                     /* hold: the chip digitises the window */
-        knock_pending = (uint8_t)((a & KNOCK_CYL) + 1u);
+        knock_pending = (uint8_t)(((a & KNOCK_CYL) + 1u) | (integrated ? 0u : 0x80u));
     }
 }
 
@@ -166,6 +174,7 @@ void knock_update(uint16_t rpm, uint16_t air_mg, int16_t clt_x10, uint8_t full_s
                 tx[3] = TPIC_INTTIME(sig[3]);
                 tx[4] = TPIC_CHANNEL(0);
                 xfer_start(XFER_CONFIG, 5, 0);
+                chip_ch = 0;
                 memcpy(cfg_sig, sig, sizeof sig);
                 configured = 1;
             }

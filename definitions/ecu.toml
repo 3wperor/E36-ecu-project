@@ -16,8 +16,8 @@
 # Injector flow, MAF curve and dead times must be set for the real parts.
 
 [meta]
-signature = "E36ECU-dev-p5"
-version = "E36 ECU firmware 0.5.0 (phase 5: knock control)"
+signature = "E36ECU-dev-p9a"
+version = "E36 ECU firmware 0.6.0 (phase 9a: lambda, idle, VANOS, overrun cut, tach)"
 
 # ============================================================== page 0: settings
 [[pages]]
@@ -627,6 +627,402 @@ options = ["MSB first (D9-D2, D1-D0)", "LSB first (D7-D0, D9-D8)"]
 default = 0
 help = "How the chip returns its 10-bit result over two SPI bytes. VERIFY on the bench: the right choice gives a steady low noise level that rises with engine speed."
 
+# ---- overrun fuel cut (Phase 9a)
+[[pages.fields]]
+name = "dfcoEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 1
+help = "Cut fuel on a closed throttle above dfcoRpm (engine braking)."
+
+[[pages.fields]]
+name = "dfcoRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 1000
+max = 6000
+default = 1800
+
+[[pages.fields]]
+name = "dfcoResumeRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 800
+max = 5000
+default = 1400
+help = "Fuel returns below this (or as soon as the throttle opens)."
+
+[[pages.fields]]
+name = "dfcoTps"
+type = "U08"
+units = "%"
+scale = 0.1
+min = 0
+max = 10
+digits = 1
+default = 1.0
+help = "Throttle counts as closed below this."
+
+[[pages.fields]]
+name = "dfcoMinClt"
+type = "U08"
+units = "C"
+translate = -40
+min = -40
+max = 120
+default = 60
+
+[[pages.fields]]
+name = "dfcoDelay"
+type = "U08"
+units = "s"
+scale = 0.1
+min = 0
+max = 5
+digits = 1
+default = 0.5
+
+# ---- closed-loop lambda (Phase 9a)
+[[pages.fields]]
+name = "lambdaMode"
+type = "U08"
+bits = [0, 1]
+options = ["Off", "Narrowband (per bank)", "Wideband", "Both (wideband, narrowband fallback)"]
+default = 0
+help = "Closed-loop fuel correction. Narrowband: per bank, only near 14.7. Wideband: to the AFR target anywhere in range."
+
+[[pages.fields]]
+name = "lambdaMinClt"
+type = "U08"
+units = "C"
+translate = -40
+min = -40
+max = 120
+default = 60
+
+[[pages.fields]]
+name = "lambdaDelay"
+type = "U08"
+units = "s"
+min = 0
+max = 255
+default = 30
+help = "Seconds after start before closed loop (sensors warming up)."
+
+[[pages.fields]]
+name = "lambdaMinRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 900
+
+[[pages.fields]]
+name = "lambdaMaxRpm"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 5500
+
+[[pages.fields]]
+name = "lambdaMaxLoad"
+type = "U16"
+units = "mg"
+min = 0
+max = 1000
+default = 450
+help = "No closed loop above this load (open-loop power enrichment)."
+
+[[pages.fields]]
+name = "lambdaMaxTrim"
+type = "U08"
+units = "%"
+min = 0
+max = 30
+default = 15
+help = "Largest correction either way."
+
+[[pages.fields]]
+name = "wbKp"
+type = "U08"
+units = "x"
+scale = 0.1
+min = 0
+max = 5
+digits = 1
+default = 0.5
+help = "Wideband: % fuel per % AFR error (proportional)."
+
+[[pages.fields]]
+name = "wbKi"
+type = "U08"
+units = "%/s"
+scale = 0.1
+min = 0
+max = 20
+digits = 1
+default = 2.0
+help = "Wideband: %/s of correction per % AFR error (integral)."
+
+[[pages.fields]]
+name = "nbThreshold"
+type = "U16"
+units = "mV"
+min = 100
+max = 900
+default = 450
+help = "Narrowband rich/lean switch point."
+
+[[pages.fields]]
+name = "nbStep"
+type = "U08"
+units = "%"
+scale = 0.1
+min = 0
+max = 10
+digits = 1
+default = 2.0
+help = "Narrowband: jump back when the sensor switches."
+
+[[pages.fields]]
+name = "nbRate"
+type = "U08"
+units = "%/s"
+scale = 0.1
+min = 0
+max = 20
+digits = 1
+default = 2.0
+help = "Narrowband: ramp while the sensor stays rich or lean."
+
+[[pages.fields]]
+name = "nbHeatDelay"
+type = "U08"
+units = "s"
+min = 0
+max = 120
+default = 10
+help = "Narrowband heaters on this long after the engine starts (protects a wet sensor)."
+
+# ---- idle (Phase 9a)
+[[pages.fields]]
+name = "iacEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 1
+help = "Idle valve outputs (stock M52 dual-coil rotary valve)."
+
+[[pages.fields]]
+name = "iacFreq"
+type = "U08"
+bits = [0, 0]
+options = ["122 Hz", "245 Hz"]
+default = 0
+help = "Idle valve PWM frequency."
+
+[[pages.fields]]
+name = "idleTargetT"
+type = "U08"
+shape = [6]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [-20, 0, 20, 40, 60, 80]
+
+[[pages.fields]]
+name = "idleTarget"
+type = "U08"
+shape = [6]
+units = "rpm"
+scale = 10
+min = 500
+max = 2000
+default = [1300, 1200, 1050, 950, 850, 800]
+help = "Target idle speed vs coolant."
+
+[[pages.fields]]
+name = "iacBaseT"
+type = "U08"
+shape = [6]
+units = "C"
+translate = -40
+min = -40
+max = 150
+default = [-20, 0, 20, 40, 60, 80]
+
+[[pages.fields]]
+name = "iacBase"
+type = "U08"
+shape = [6]
+units = "%"
+min = 0
+max = 100
+default = [50, 45, 40, 35, 32, 30]
+help = "Idle valve opening without correction vs coolant. PLACEHOLDER: set on the car."
+
+[[pages.fields]]
+name = "iacCrank"
+type = "U08"
+units = "%"
+min = 0
+max = 100
+default = 45
+help = "Idle valve opening while cranking."
+
+[[pages.fields]]
+name = "idleTps"
+type = "U08"
+units = "%"
+scale = 0.1
+min = 0
+max = 10
+digits = 1
+default = 1.5
+help = "Throttle below this = idling (closed-loop idle)."
+
+[[pages.fields]]
+name = "idleKp"
+type = "U08"
+units = "%/rpm"
+scale = 0.01
+min = 0
+max = 1
+digits = 2
+default = 0.05
+
+[[pages.fields]]
+name = "idleKi"
+type = "U08"
+units = "%/s/rpm"
+scale = 0.01
+min = 0
+max = 1
+digits = 2
+default = 0.05
+
+[[pages.fields]]
+name = "idleMaxTrim"
+type = "U08"
+units = "%"
+min = 0
+max = 50
+default = 20
+help = "Largest closed-loop change to the valve."
+
+[[pages.fields]]
+name = "dashpot"
+type = "U08"
+units = "%"
+min = 0
+max = 30
+default = 6
+help = "Extra valve opening when the throttle closes, fading out (stops stalling)."
+
+[[pages.fields]]
+name = "dashpotDecay"
+type = "U08"
+units = "%/s"
+min = 1
+max = 100
+default = 10
+
+[[pages.fields]]
+name = "idleIgnEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 1
+help = "Fast idle control with timing (very effective with ITBs)."
+
+[[pages.fields]]
+name = "idleIgnGain"
+type = "U08"
+units = "deg/rpm"
+scale = 0.01
+min = 0
+max = 0.5
+digits = 2
+default = 0.02
+
+[[pages.fields]]
+name = "idleIgnMax"
+type = "U08"
+units = "deg"
+scale = 0.1
+min = 0
+max = 20
+digits = 1
+default = 8.0
+
+# ---- VANOS and tach (Phase 9a)
+[[pages.fields]]
+name = "vanosEnable"
+type = "U08"
+bits = [0, 0]
+options = ["Off", "On"]
+default = 1
+help = "Single (intake) VANOS solenoid, on/off."
+
+[[pages.fields]]
+name = "vanosRpmOn"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 1500
+help = "VANOS engaged between vanosRpmOn and vanosRpmOff. PLACEHOLDER: stock-like window."
+
+[[pages.fields]]
+name = "vanosRpmOff"
+type = "U08"
+units = "rpm"
+scale = 100
+min = 500
+max = 9000
+default = 5000
+
+[[pages.fields]]
+name = "vanosMinTps"
+type = "U08"
+units = "%"
+min = 0
+max = 100
+default = 10
+
+[[pages.fields]]
+name = "vanosMinClt"
+type = "U08"
+units = "C"
+translate = -40
+min = -40
+max = 120
+default = 40
+
+[[pages.fields]]
+name = "vanosHyst"
+type = "U08"
+units = "rpm"
+scale = 10
+min = 0
+max = 1000
+default = 100
+
+[[pages.fields]]
+name = "tachMode"
+type = "U08"
+bits = [0, 1]
+options = ["Off", "3 pulses/rev (6 cyl cluster)", "2 pulses/rev", "1 pulse/rev"]
+default = 1
+
 # ============================================================== page 1: tables
 [[pages]]
 id = 1
@@ -1059,6 +1455,48 @@ type = "U08"
 help = "bit 0 enabled, 1 active (conditions met), 2 knock in the last 0.5 s, 3 chip fault"
 log = true
 
+[[channels]]
+name = "engine2"
+type = "U08"
+help = "bit 0 idle control, 1 overrun cut, 2 VANOS on, 3 narrowband heaters, 4 closed-loop lambda, 5 wideband fault (implausible), 6 narrowband A rich, 7 narrowband B rich"
+log = true
+
+[[channels]]
+name = "lambdaTrimA"
+type = "S16"
+units = "%"
+scale = 0.1
+digits = 1
+log = true
+
+[[channels]]
+name = "lambdaTrimB"
+type = "S16"
+units = "%"
+scale = 0.1
+digits = 1
+log = true
+
+[[channels]]
+name = "iacDuty"
+type = "U08"
+units = "%"
+log = true
+
+[[channels]]
+name = "idleRpmTarget"
+type = "U16"
+units = "rpm"
+log = true
+
+[[channels]]
+name = "idleIgn"
+type = "S16"
+units = "deg"
+scale = 0.1
+digits = 1
+log = true
+
 # ============================================================== TunerStudio UI
 [[dialogs]]
 name = "engineDlg"
@@ -1108,6 +1546,44 @@ title = "Knock threshold"
 menu = "Ignition"
 x = "knockThrRpm"
 y = "knockThr"
+
+[[dialogs]]
+name = "dfcoDlg"
+title = "Overrun fuel cut"
+menu = "Fuel"
+fields = ["dfcoEnable", "dfcoRpm", "dfcoResumeRpm", "dfcoTps", "dfcoMinClt", "dfcoDelay"]
+
+[[dialogs]]
+name = "lambdaDlg"
+title = "Closed-loop lambda"
+menu = "Fuel"
+fields = ["lambdaMode", "lambdaMinClt", "lambdaDelay", "lambdaMinRpm", "lambdaMaxRpm", "lambdaMaxLoad", "lambdaMaxTrim", "wbKp", "wbKi", "nbThreshold", "nbStep", "nbRate", "nbHeatDelay"]
+
+[[dialogs]]
+name = "idleDlg"
+title = "Idle control"
+menu = "Idle"
+fields = ["iacEnable", "iacFreq", "iacCrank", "idleTps", "idleKp", "idleKi", "idleMaxTrim", "dashpot", "dashpotDecay", "idleIgnEnable", "idleIgnGain", "idleIgnMax"]
+
+[[dialogs]]
+name = "vanosDlg"
+title = "VANOS and tach"
+menu = "Ignition"
+fields = ["vanosEnable", "vanosRpmOn", "vanosRpmOff", "vanosMinTps", "vanosMinClt", "vanosHyst", "tachMode"]
+
+[[curves]]
+name = "idleTargetCurve"
+title = "Idle target speed"
+menu = "Idle"
+x = "idleTargetT"
+y = "idleTarget"
+
+[[curves]]
+name = "iacBaseCurve"
+title = "Idle valve base opening"
+menu = "Idle"
+x = "iacBaseT"
+y = "iacBase"
 
 [[curves]]
 name = "injDeadCurve"

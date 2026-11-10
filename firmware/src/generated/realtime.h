@@ -54,9 +54,15 @@ typedef struct __attribute__((packed)) {
     uint8_t knockRetard[6];           /* 117 deg x0.1 */
     uint16_t knockCount;              /* 123  */
     uint8_t knockState;               /* 125  */
+    uint8_t engine2;                  /* 126  */
+    int16_t lambdaTrimA;              /* 127 % x0.1 */
+    int16_t lambdaTrimB;              /* 129 % x0.1 */
+    uint8_t iacDuty;                  /* 131 % */
+    uint16_t idleRpmTarget;           /* 132 rpm */
+    int16_t idleIgn;                  /* 134 deg x0.1 */
 } realtime_t;
 
-#define REALTIME_SIZE 126u
+#define REALTIME_SIZE 136u
 _Static_assert(sizeof(realtime_t) == REALTIME_SIZE, "realtime layout");
 
 #endif

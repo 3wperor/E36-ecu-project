@@ -64,7 +64,7 @@ on a real board, or by hand on Windows / macOS.
 2. **File → New Project**, name it, and when asked for the firmware choose **Other / Browse** and
    select `tuner/e36ecu.ini` from this repository.
 3. Connection: the ECU's serial port at **115200** baud.
-4. The ECU's signature must match the ini (`E36ECU-dev-p5` for this version). If the firmware and
+4. The ECU's signature must match the ini (`E36ECU-dev-p9a` for this version). If the firmware and
    the ini come from different versions, TunerStudio will refuse to connect, which is intended.
 
 Menus: **Fuel** (engine and injectors, cranking, acceleration, AFR / VE / blend / MAF-trim /

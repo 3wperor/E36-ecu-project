@@ -99,15 +99,21 @@ def channel(name, d=DEF):
     return [c for c in d["channels"] if c["name"] == name][0]
 
 
+# engine2 bits: idle, overrun cut, VANOS, O2 heaters, closed loop, wideband fault, NB A / B rich
+ENGINE2_BITS = ["IDLE", "DFCO", "VANOS", "HEAT", "CL", "WB-BAD", "NB-A-rich", "NB-B-rich"]
+
+
 def describe_realtime(rt: dict) -> str:
     v = lambda n: shown(channel(n), rt[n])
     eng = [b for i, b in enumerate(ENGINE_BITS) if rt["engine"] & (1 << i)]
     flt = [b for i, b in enumerate(FAULT_BITS) if rt["faults"] & (1 << i)]
+    eng2 = [b for i, b in enumerate(ENGINE2_BITS) if rt.get("engine2", 0) & (1 << i)]
     out = "".join(("IGN " if rt["out_enable"] & 1 else "", "INJ " if rt["out_enable"] & 2 else "")) or "off "
     return (f"{rt['rpm']:5d} rpm  sync {SYNC_NAMES.get(rt['sync'], '?'):10s} "
             f"TPS {v('tps'):5.1f}%  air {v('air'):5.1f}mg  AFR {v('afr'):5.2f}/{v('afrTarget'):5.2f}  "
             f"pw {v('pw'):6.3f}ms  adv {v('advance'):5.1f}°  CLT {v('clt'):5.1f}C  {v('vbat'):5.2f}V  "
-            f"out {out} {' '.join(eng)}  {('FAULT: ' + ' '.join(flt)) if flt else ''}")
+            f"trim {v('lambdaTrimA'):+5.1f}/{v('lambdaTrimB'):+5.1f}%  IAC {rt['iacDuty']:3d}%  "
+            f"out {out} {' '.join(eng + eng2)}  {('FAULT: ' + ' '.join(flt)) if flt else ''}")
 
 
 # ------------------------------------------------------------ tune values --

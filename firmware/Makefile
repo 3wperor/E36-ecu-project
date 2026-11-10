@@ -96,7 +96,11 @@ $(BUILD)/test_knock: test/test_knock.c src/generated/tune_defaults.c $(wildcard 
 	@mkdir -p $(BUILD)
 	gcc $(HOST_CFLAGS) test/test_knock.c src/generated/tune_defaults.c -o $@
 
-test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/test_storage $(BUILD)/test_engine $(BUILD)/test_knock
+$(BUILD)/test_control: test/test_control.c src/generated/tune_defaults.c $(wildcard src/engine/*.h src/generated/*.h)
+	@mkdir -p $(BUILD)
+	gcc $(HOST_CFLAGS) test/test_control.c src/generated/tune_defaults.c -lm -o $@
+
+test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/test_storage $(BUILD)/test_engine $(BUILD)/test_knock $(BUILD)/test_control
 	python3 ../tools/codegen/gen.py --check
 	./$(BUILD)/host_tests
 	./$(BUILD)/test_decoder
@@ -104,6 +108,7 @@ test: $(BUILD)/host_tests $(BUILD)/test_decoder $(BUILD)/test_sched $(BUILD)/tes
 	./$(BUILD)/test_storage
 	./$(BUILD)/test_engine
 	./$(BUILD)/test_knock
+	./$(BUILD)/test_control
 	cd .. && python3 -m unittest -q tools/codegen/test_gen.py tools/test_ecu_cli.py
 	cd ../tuner && QT_QPA_PLATFORM=offscreen python3 -m unittest -q tests.test_core tests.test_gui
 

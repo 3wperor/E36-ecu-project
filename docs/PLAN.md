@@ -310,7 +310,7 @@ extension.
 Integer fixed point throughout (floating point costs ~150 µs per operation on AVR). Runs every 10 ms;
 values that depend only on the tune or slow sensors (temperatures, battery, injector flow, air density)
 are cached every 100 ms, so the 100 Hz step needs only a few divisions. Measured: ~0.9 ms per 10 ms step
-including interrupts (≈ 9 % CPU), see §3.6.
+including interrupts (≈ 9 % CPU); ~1.1 ms with the Phase 9a controls (lambda, idle, VANOS), see §3.6.
 
 **Load = air mass per cylinder per intake stroke (mg), selected by `loadSource`:**
 ```
@@ -330,7 +330,9 @@ pulse = air / AFR_target(rpm, load) / injector flow
 - Acceleration enrichment: throttle opening rate → extra fuel, fading over `aeTime`. After-start
   enrichment fades over `afterStartTime`.
 - Rev limiter: fuel cut with hysteresis. Fuel stops whenever the engine is not synced/turning.
-- Closed-loop lambda (narrowband and wideband) comes in Phase 9 (§3.9).
+- Overrun fuel cut (Phase 9a): throttle closed, above `dfcoRpm`, warm, after `dfcoDelay`; fuel back below
+  `dfcoResumeRpm` or when the throttle opens.
+- Closed-loop lambda (narrowband per bank and wideband): Phase 9a, §3.9.
 
 **Ignition:** advance table (rpm × load) + coolant trim + per-cylinder trim; fixed cranking advance;
 dwell vs battery voltage; end of injection from an 8 × 8 table. Per-cylinder knock retard: Phase 5.
@@ -343,8 +345,18 @@ fault bits and fall back to safe values (CLT 60 °C, IAT 30 °C, throttle closed
 8- or 16-bit axes. RPM × TPS axes for the Alpha-N, blend and MAF-trim tables; RPM × load for AFR and
 ignition.
 
-**Still to come (Phase 9):** idle valve closed-loop on RPM target vs CLT; VANOS on/off by RPM × load;
-fan; A/C idle-up; closed-loop lambda.
+**Idle (Phase 9a, `control_core.h`):** target rpm and base valve opening are curves vs coolant; a PI loop
+on rpm at 20 Hz trims the valve within `idleMaxTrim`; fixed opening while cranking; a dashpot adds
+opening when the throttle closes and fades out; ignition idle control adds or removes up to
+`idleIgnMax` of advance in proportion to the rpm error (fast, while the valve is slow). The valve is the
+M52's two-coil rotary actuator, driven with complementary PWM from Timer2 (OC2A opens, OC2B closes).
+
+**VANOS (Phase 9a):** on/off solenoid, on between `vanosRpmOn` and `vanosRpmOff` with the throttle above
+`vanosMinTps` and the engine warm, with hysteresis on all three. **Tach (Phase 9a):** the crank ISR
+toggles the cluster's tach output on fixed teeth (3, 2 or 1 pulses per revolution), one table load and
+one port write per tooth.
+
+**Still to come (Phase 9b):** fan; A/C idle-up; VANOS by an rpm × load table; long-term trim learning.
 
 ### 3.5 Knock control (implemented in Phase 5: `firmware/src/knock/`)
 
@@ -379,25 +391,26 @@ fan; A/C idle-up; closed-loop lambda.
 
 | Item | Per engine cycle (16.67 ms) |
 |------|-----------------------------|
-| 116 crank ISRs: ~21 µs on a plain tooth, 25.7 µs average, up to 66 µs on a tooth that arms outputs and starts a knock read (measured, Phase 5) | ~3.0 ms |
-| Engine calculation, 100 Hz: ~0.9 ms per step incl. interrupts (measured, Phase 4) | ~1.5 ms |
+| 116 crank ISRs: ~22 µs on a plain tooth, 26.9 µs average, up to 67 µs on a tooth that arms outputs and starts a knock read (measured, Phase 9a) | ~3.1 ms |
+| Engine calculation, 100 Hz: ~1.1 ms per step incl. interrupts (measured, Phase 9a; ~50 µs of it the lambda/idle/VANOS controls) | ~1.9 ms |
 | Output schedule update, 100 Hz: ~0.44 ms per step | ~0.7 ms |
 | 24 output-compare ISRs × 5.3 µs (measured) | ~0.13 ms |
 | Timer tick, ADC and UART ISRs | ~0.9 ms |
-| **Interrupt load, all 12 outputs running (measured in simavr)** | **25 %** |
-| Main loop still free (after interrupts and the 100 Hz engine and schedule updates) | ~60 % |
+| **Interrupt load, all 12 outputs running (measured in simavr)** | **25.5 %** |
+| Main loop still free (after interrupts and the 100 Hz engine and schedule updates) | ~55 % |
 
 Each plain tooth spends about a third of its time saving and restoring registers (normal for C ISRs on
 AVR); the rare paths (gap, output arming) are separate functions so the plain path saves as few registers
-as possible. The knock hook adds ~1.7 µs per tooth (its work runs after the outputs are armed, so it
-never delays an edge). Regression tests fail if the crank ISR average exceeds 27 µs or its worst case 70 µs.
+as possible. The knock hook adds ~1.7 µs per tooth and the tach hook ~1.1 µs (both run after the outputs
+are armed, so they never delay an edge). Regression tests fail if the crank ISR average exceeds 27 µs or
+its worst case 70 µs, the interrupt load 27 %, or the 100 Hz engine calculation 1.2 ms.
 
 Main loop: the 12-channel schedule is recomputed at 100 Hz. Fixed-point math, no floats; 32-bit divides only a
 few per update (they cost ~40 µs each on AVR, so angle wrapping and degree conversion use add/subtract and
 multiply-shift instead).
 
-Memory (Phase 5, measured): flash 24 KB of 128 KB (18 %); SRAM 4.3 KB of 8 KB (53 %) static, of which the
-live tune is 1.69 KB; EEPROM 3.7 KB of 4 KB (two copies of the tune). EEPROM is written only on "burn",
+Memory (Phase 9a, measured): flash 28 KB of 128 KB (22 %); SRAM 4.5 KB of 8 KB (55 %) static, of which the
+live tune is 1.75 KB; EEPROM 3.7 KB of 4 KB (two copies of the tune). EEPROM is written only on "burn",
 only changed bytes (100k write endurance per byte). SRAM is the resource to watch.
 
 ### 3.7 Main loop scheduling
@@ -474,8 +487,19 @@ Both sensor types are wired permanently; the tune selects how they are used.
 
 Common rules: closed loop only when warm (CLT threshold), after the sensors are ready, not during
 acceleration enrichment, overrun fuel cut or rev limiting. Trims are limited (e.g. ±15 %); hitting the limit
-sets a warning. Long-term learning (stored trim tables) is a Phase 9 option. The tuner's auto-tune uses the
+sets a warning. Long-term learning (stored trim tables) is a Phase 9b option. The tuner's auto-tune uses the
 wideband logs either way.
+
+**Implemented (Phase 9a, `firmware/src/engine/control_core.h`):** `lambdaMode` Off / Narrowband / Wideband
+/ Both. Closed loop needs: running, not cranking, no accel enrichment, no overrun cut or rev limit,
+coolant ≥ `lambdaMinClt`, `lambdaDelay` after start, rpm and load inside `lambdaMinRpm`–`lambdaMaxRpm` and
+`lambdaMaxLoad`. Wideband: PI on the AFR error in % (`wbKp`, `wbKi`); a reading within 0.3 AFR of either
+end of the wideband's output range counts as a fault (`engine2` bit 5) — open loop in Wideband mode,
+narrowbands in Both mode. Narrowband: per-bank switching PI (`nbThreshold`, step `nbStep` on each
+switch, ramp `nbRate`), only when the AFR target is 14.4–15.0. Outside closed loop the trims are zero and
+the integrators are kept, so the loop resumes where it was. Trims are applied to the injector opening
+time (not the dead time) of cylinders 1–3 and 4–6. Narrowband heaters switch on `nbHeatDelay` after
+start. The divisions are replaced by shifts and cached reciprocals (the controls cost ~50 µs per 10 ms).
 
 **Mounting:** the narrowbands stay in their stock positions (one per bank). The wideband is best where
 both banks merge, so it sees all six cylinders. On one bank it only sees three.
@@ -491,7 +515,7 @@ both banks merge, so it sees all six cylinders. On one bank it only sees three.
   `R`/`M` read/write tune page bytes (u16 little-endian page, offset, count), `B` burn page, `D` restore
   page defaults, `T` tooth logger, `P`/`p` bench output test. Still to come: composite and knock loggers,
   reboot-to-bootloader.
-- Live data: 93 bytes; at 30–50 Hz ≈ 3–4.7 KB/s, within the 11.5 KB/s link.
+- Live data: 136 bytes; at 30–50 Hz ≈ 4–6.8 KB/s, within the 11.5 KB/s link.
 
 **Single source of truth (implemented):** `definitions/ecu.toml` describes every page, field, table, curve,
 dialog and live-data channel. `tools/codegen/gen.py` generates:
@@ -558,7 +582,8 @@ Each phase ends with a concrete, testable result. Phases 1–5 need no car and n
 | **6. PCB rev A** | Real hardware | Schematic + layout, ordered, assembled; bring-up checklist: power, protection, each input, each driver on resistive/real loads, real coils into spark gaps on the bench |
 | **7. Sniffer mode on the car** | Validate decoder on the real engine with zero risk | Custom ECU wired **in parallel** to stock crank/cam/knock/sensors (outputs disconnected) while the stock DME runs the car; logs show solid sync, correct RPM and sensible sensor values through drives |
 | **8. First start (stock intake)** | Engine runs on the custom ECU | Wideband fitted; base tune from the stock HFM curve and injector data; timing confirmed with timing light; starts, idles, revs; failsafes verified |
-| **9. Tuning & refinement (stock intake)** | Drives as well as stock | Closed-loop AFR, idle valve control, VANOS, warm-up/accel enrichment, knock calibration (noise learning, thresholds), MAF-trim auto-tune, tuner T4–T8 |
+| **9a. Controls firmware** ✅ (in simulation) | The features the car needs to drive | Closed-loop lambda (narrowband per bank, wideband, fallback), idle valve PI + ignition idle control, VANOS, overrun fuel cut, tach output, narrowband heaters — tested against engine models and in simavr (`firmware/README.md`) |
+| **9. Tuning & refinement (stock intake)** | Drives as well as stock | Closed loop, idle and VANOS calibrated on the car; warm-up/accel enrichment, knock calibration (noise learning, thresholds), MAF-trim auto-tune, tuner T4–T8; 9b: fan, A/C idle-up, long-term trims |
 | **10. ITB conversion** | Plenum ITBs on the known-good ECU | ITB TPS, relocated IAT and idle air plumbed; blend table and Alpha-N VE tuned; MAF pulsation and saturation checked in logs; throttle sync set; knock re-checked; dyno or careful road tuning |
 
 Suggested parallelisation: hardware design (Phase 6) can start right after Phase 0 measurements, while

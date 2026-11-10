@@ -3,7 +3,7 @@
 Bare-metal C for the ATmega1280 (also builds for the pin-compatible ATmega2560).
 No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 
-## Status — Phases 1 to 5 done in simulation
+## Status — Phases 1 to 5 and 9a done in simulation
 
 | Part | State |
 |------|-------|
@@ -23,9 +23,15 @@ No Arduino core. Design: [../docs/PLAN.md](../docs/PLAN.md) §3.
 | Sensors: MAF curve, two TPS, CLT/IAT thermistor, battery, wideband, narrowbands, fault detection | done |
 | Engine maths: MAF / Alpha-N / blend load, fuel (AFR target, flow, warm-up, accel and after-start enrichment, cranking, dead time, cylinder trims, rev limiter), ignition (table, coolant and cylinder trims, cranking advance, dwell), end of injection, fuel pump | done — see below |
 | Knock control: TPIC8101 on SPI, per-cylinder windows, learned noise, per-cylinder retard and recovery, chip-fault retard | done in simulation; chip settings to confirm on the bench (below) |
-| Closed-loop lambda, idle valve, VANOS | Phase 9 |
+| Overrun fuel cut (closed throttle, above an rpm, warm, after a delay; resumes below a lower rpm) | done (Phase 9a) |
+| Closed-loop lambda: off / narrowband per bank / wideband / wideband with narrowband fallback; trim limits; wideband fault detection | done in simulation (Phase 9a) |
+| Idle: target rpm and base valve opening vs coolant, PI on rpm, cranking opening, dashpot, ignition idle control | done in simulation (Phase 9a) |
+| Idle valve driver: complementary PWM on Timer2 for the two-coil rotary valve (122 or 245 Hz) | done (Phase 9a); check the valve on the bench |
+| VANOS on/off by rpm window, throttle and coolant, with hysteresis; narrowband heaters after a delay | done (Phase 9a) |
+| Tach output to the instrument cluster (3, 2 or 1 pulses per revolution) | done (Phase 9a) |
+| Fan, A/C idle-up, long-term fuel trim learning, VANOS by rpm × load table | later (Phase 9b) |
 
-Current size: ~24 KB flash (18 %), ~4.3 KB RAM (53 %) — RAM is the resource to watch.
+Current size: ~28 KB flash (22 %), ~4.5 KB RAM (55 %) — RAM is the resource to watch.
 
 ### Decoder test results
 
@@ -134,7 +140,7 @@ Serial console at 115200 baud: `r3000` (set rpm, `r0` stops), `s800,7200,5000`
 `make sim-test` (real firmware in simavr): default tune at first boot; tune switched on over the
 protocol; at 3000 rpm the calculated pulse width matches an independent calculation within 0.1 % and the
 injectors and coils fire exactly the calculated pulse and dwell; `engine_update` costs ~0.9 ms per 10 ms
-(incl. interrupts); burn → power cycle (new chip, saved EEPROM) → the tune is still there.
+(Phase 4; ~1.1 ms with the Phase 9a controls, incl. interrupts); burn → power cycle (new chip, saved EEPROM) → the tune is still there.
 
 ### Knock control test results (Phase 5)
 
@@ -150,6 +156,32 @@ one on the correct sensor; background noise learned (120 vs 120 injected); knock
 3 retards only cylinder 3, and its spark, measured in the timer registers, moves 9.8° against a 9.7°
 retard; timing comes back at ~1°/s; a chip returning 0 puts 3° on every cylinder; disabling stops the
 windows. Crank ISR with knock running: 25.5 µs average, 66 µs worst.
+
+### Lambda, idle, VANOS, overrun and tach test results (Phase 9a)
+
+`make test` (`test_control`, the control logic against simple engine models): overrun cut after 510 ms
+with a 0.5 s delay and back on below the resume speed; wideband loop on an engine 8 % lean settles at
++7.9 % within 2 s (AFR 14.71 vs 14.7), and a 25 % rich engine stops at the 15 % limit; narrowband loop
+with a 100 ms sensor delay, bank A 5 % lean and bank B 3 % rich → average trims +4.1 % / −2.1 % (each
+bank on its own); wideband at a rail → narrowband fallback in mode 3, open loop in mode 2; idle on a
+valve/speed model holds 797 rpm against an 800 target, also after an A/C load step; idle timing pushes
+the right way and is limited; dashpot; VANOS hysteresis; heater delay.
+
+`make sim-test` (real firmware in simavr): tach 150 pulses in 1 s at 3000 rpm (3 per revolution) and
+held low when the engine stops; VANOS output on at 3000 rpm / 25 % throttle and off on a closed
+throttle; idle valve PWM duty in the Timer2 registers matches the live value (OC2A normal, OC2B
+inverted); closed throttle at 3000 rpm → no injections at all; wideband reading 16.0 against a 14.7
+target → +15 % trim (the limit) and a longer measured injector pulse; narrowband bank A rich / bank B
+lean → −8.4 % / +6.3 % after 3 s and measured bank A pulses shorter than bank B's.
+
+Pins on the Mega for a bench check: idle valve open coil D10 (OC2A), close coil D9 (OC2B), VANOS D24,
+narrowband heaters D25/D26, tach D27. These are 5 V logic signals: the valve, solenoid, heaters and
+cluster need driver stages (low-side MOSFETs; open-collector with a pull-up for the tach), which come
+with the PCB in Phase 6.
+
+**Before closed loop on the car:** leave `lambdaMode` Off for the first start, check the wideband reads
+the same as its own controller's display, then enable wideband mode. Narrowband mode only acts at
+λ = 1 targets (14.4–15.0 AFR).
 
 ### Knock chip bench test (Phase 5 hardware step)
 

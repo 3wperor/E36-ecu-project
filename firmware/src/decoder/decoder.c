@@ -7,6 +7,7 @@
 #include "decoder/decoder_core.h"
 #include "sched/sched_hw_avr.h"
 #include "knock/knock.h"
+#include "engine/aux.h"
 
 #include <avr/interrupt.h>
 #include <avr/io.h>
@@ -20,9 +21,13 @@ ISR(TIMER5_CAPT_vect)
     uint16_t icr = ICR5;
     uint8_t ev = dec_crank_edge(&dec, icr);
     sched_tooth(&sched, &dec, ev, icr);
-    if (dec.sync == SYNC_FULL) {
-        if (ev & EV_TOOTH) knock_tooth((uint8_t)(dec.tooth + (dec.rev ? 60u : 0u)));
-    } else if (ev & (EV_SYNC_LOST | EV_CAM_ERR)) {
+    uint8_t sync = dec.sync;
+    if (ev & EV_TOOTH) {
+        uint8_t tooth = dec.tooth;
+        if (sync >= SYNC_CRANK) aux_tach_tooth(tooth);
+        if (sync == SYNC_FULL) knock_tooth((uint8_t)(tooth + (dec.rev ? 60u : 0u)));
+    }
+    if (sync != SYNC_FULL && (ev & (EV_SYNC_LOST | EV_CAM_ERR))) {
         knock_stop();
     }
     if (ev & EV_SYNC_LOST) {

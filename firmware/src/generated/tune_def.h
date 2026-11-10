@@ -4,13 +4,13 @@
 
 #include <stdint.h>
 
-#define ECU_SIGNATURE    "E36ECU-dev-p5"
-#define ECU_VERSION      "E36 ECU firmware 0.5.0 (phase 5: knock control)"
+#define ECU_SIGNATURE    "E36ECU-dev-p9a"
+#define ECU_VERSION      "E36 ECU firmware 0.6.0 (phase 9a: lambda, idle, VANOS, overrun cut, tach)"
 
 #define TUNE_PAGES       2u
-#define TUNE_LAYOUT_HASH 0x758548E6UL
+#define TUNE_LAYOUT_HASH 0x219D15FBUL
 
-#define TUNE_PAGE0_SIZE 256u   /* settings */
+#define TUNE_PAGE0_SIZE 320u   /* settings */
 #define TUNE_PAGE1_SIZE 1432u   /* tables */
 
 extern uint8_t tune_page0[TUNE_PAGE0_SIZE];
@@ -259,6 +259,140 @@ static inline uint8_t tu_knockIntTime(void) { return tune_page0[254]; }
 /* knockReadOrder: U08 , shown = raw */
 #define TU_KNOCK_READ_ORDER_OFF 255u
 static inline uint8_t tu_knockReadOrder(void) { return (uint8_t)((tune_page0[255] >> 0) & 1u); }
+/* dfcoEnable: U08 , shown = raw */
+#define TU_DFCO_ENABLE_OFF 256u
+static inline uint8_t tu_dfcoEnable(void) { return (uint8_t)((tune_page0[256] >> 0) & 1u); }
+/* dfcoRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_DFCO_RPM_OFF 257u
+static inline uint8_t tu_dfcoRpm(void) { return tune_page0[257]; }
+/* dfcoResumeRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_DFCO_RESUME_RPM_OFF 258u
+static inline uint8_t tu_dfcoResumeRpm(void) { return tune_page0[258]; }
+/* dfcoTps: U08 %, shown = (raw + 0) * 0.1 */
+#define TU_DFCO_TPS_OFF 259u
+static inline uint8_t tu_dfcoTps(void) { return tune_page0[259]; }
+/* dfcoMinClt: U08 C, shown = (raw - 40) * 1 */
+#define TU_DFCO_MIN_CLT_OFF 260u
+static inline uint8_t tu_dfcoMinClt(void) { return tune_page0[260]; }
+/* dfcoDelay: U08 s, shown = (raw + 0) * 0.1 */
+#define TU_DFCO_DELAY_OFF 261u
+static inline uint8_t tu_dfcoDelay(void) { return tune_page0[261]; }
+/* lambdaMode: U08 , shown = raw */
+#define TU_LAMBDA_MODE_OFF 262u
+static inline uint8_t tu_lambdaMode(void) { return (uint8_t)((tune_page0[262] >> 0) & 3u); }
+/* lambdaMinClt: U08 C, shown = (raw - 40) * 1 */
+#define TU_LAMBDA_MIN_CLT_OFF 263u
+static inline uint8_t tu_lambdaMinClt(void) { return tune_page0[263]; }
+/* lambdaDelay: U08 s, shown = raw */
+#define TU_LAMBDA_DELAY_OFF 264u
+static inline uint8_t tu_lambdaDelay(void) { return tune_page0[264]; }
+/* lambdaMinRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_LAMBDA_MIN_RPM_OFF 265u
+static inline uint8_t tu_lambdaMinRpm(void) { return tune_page0[265]; }
+/* lambdaMaxRpm: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_LAMBDA_MAX_RPM_OFF 266u
+static inline uint8_t tu_lambdaMaxRpm(void) { return tune_page0[266]; }
+/* lambdaMaxLoad: U16 mg, shown = raw */
+#define TU_LAMBDA_MAX_LOAD_OFF 267u
+static inline uint16_t tu_lambdaMaxLoad(void) { return tune_rd16(&tune_page0[267]); }
+/* lambdaMaxTrim: U08 %, shown = raw */
+#define TU_LAMBDA_MAX_TRIM_OFF 269u
+static inline uint8_t tu_lambdaMaxTrim(void) { return tune_page0[269]; }
+/* wbKp: U08 x, shown = (raw + 0) * 0.1 */
+#define TU_WB_KP_OFF 270u
+static inline uint8_t tu_wbKp(void) { return tune_page0[270]; }
+/* wbKi: U08 %/s, shown = (raw + 0) * 0.1 */
+#define TU_WB_KI_OFF 271u
+static inline uint8_t tu_wbKi(void) { return tune_page0[271]; }
+/* nbThreshold: U16 mV, shown = raw */
+#define TU_NB_THRESHOLD_OFF 272u
+static inline uint16_t tu_nbThreshold(void) { return tune_rd16(&tune_page0[272]); }
+/* nbStep: U08 %, shown = (raw + 0) * 0.1 */
+#define TU_NB_STEP_OFF 274u
+static inline uint8_t tu_nbStep(void) { return tune_page0[274]; }
+/* nbRate: U08 %/s, shown = (raw + 0) * 0.1 */
+#define TU_NB_RATE_OFF 275u
+static inline uint8_t tu_nbRate(void) { return tune_page0[275]; }
+/* nbHeatDelay: U08 s, shown = raw */
+#define TU_NB_HEAT_DELAY_OFF 276u
+static inline uint8_t tu_nbHeatDelay(void) { return tune_page0[276]; }
+/* iacEnable: U08 , shown = raw */
+#define TU_IAC_ENABLE_OFF 277u
+static inline uint8_t tu_iacEnable(void) { return (uint8_t)((tune_page0[277] >> 0) & 1u); }
+/* iacFreq: U08 , shown = raw */
+#define TU_IAC_FREQ_OFF 278u
+static inline uint8_t tu_iacFreq(void) { return (uint8_t)((tune_page0[278] >> 0) & 1u); }
+/* idleTargetT: U08[6] C, shown = (raw - 40) * 1 */
+#define TU_IDLE_TARGET_T_OFF 279u
+#define TU_IDLE_TARGET_T_N 6u
+static inline uint8_t tu_idleTargetT(uint16_t i) { return tune_page0[279u + i]; }
+static inline const uint8_t *tu_idleTargetT_ptr(void) { return &tune_page0[279]; }
+/* idleTarget: U08[6] rpm, shown = (raw + 0) * 10 */
+#define TU_IDLE_TARGET_OFF 285u
+#define TU_IDLE_TARGET_N 6u
+static inline uint8_t tu_idleTarget(uint16_t i) { return tune_page0[285u + i]; }
+static inline const uint8_t *tu_idleTarget_ptr(void) { return &tune_page0[285]; }
+/* iacBaseT: U08[6] C, shown = (raw - 40) * 1 */
+#define TU_IAC_BASE_T_OFF 291u
+#define TU_IAC_BASE_T_N 6u
+static inline uint8_t tu_iacBaseT(uint16_t i) { return tune_page0[291u + i]; }
+static inline const uint8_t *tu_iacBaseT_ptr(void) { return &tune_page0[291]; }
+/* iacBase: U08[6] %, shown = raw */
+#define TU_IAC_BASE_OFF 297u
+#define TU_IAC_BASE_N 6u
+static inline uint8_t tu_iacBase(uint16_t i) { return tune_page0[297u + i]; }
+static inline const uint8_t *tu_iacBase_ptr(void) { return &tune_page0[297]; }
+/* iacCrank: U08 %, shown = raw */
+#define TU_IAC_CRANK_OFF 303u
+static inline uint8_t tu_iacCrank(void) { return tune_page0[303]; }
+/* idleTps: U08 %, shown = (raw + 0) * 0.1 */
+#define TU_IDLE_TPS_OFF 304u
+static inline uint8_t tu_idleTps(void) { return tune_page0[304]; }
+/* idleKp: U08 %/rpm, shown = (raw + 0) * 0.01 */
+#define TU_IDLE_KP_OFF 305u
+static inline uint8_t tu_idleKp(void) { return tune_page0[305]; }
+/* idleKi: U08 %/s/rpm, shown = (raw + 0) * 0.01 */
+#define TU_IDLE_KI_OFF 306u
+static inline uint8_t tu_idleKi(void) { return tune_page0[306]; }
+/* idleMaxTrim: U08 %, shown = raw */
+#define TU_IDLE_MAX_TRIM_OFF 307u
+static inline uint8_t tu_idleMaxTrim(void) { return tune_page0[307]; }
+/* dashpot: U08 %, shown = raw */
+#define TU_DASHPOT_OFF 308u
+static inline uint8_t tu_dashpot(void) { return tune_page0[308]; }
+/* dashpotDecay: U08 %/s, shown = raw */
+#define TU_DASHPOT_DECAY_OFF 309u
+static inline uint8_t tu_dashpotDecay(void) { return tune_page0[309]; }
+/* idleIgnEnable: U08 , shown = raw */
+#define TU_IDLE_IGN_ENABLE_OFF 310u
+static inline uint8_t tu_idleIgnEnable(void) { return (uint8_t)((tune_page0[310] >> 0) & 1u); }
+/* idleIgnGain: U08 deg/rpm, shown = (raw + 0) * 0.01 */
+#define TU_IDLE_IGN_GAIN_OFF 311u
+static inline uint8_t tu_idleIgnGain(void) { return tune_page0[311]; }
+/* idleIgnMax: U08 deg, shown = (raw + 0) * 0.1 */
+#define TU_IDLE_IGN_MAX_OFF 312u
+static inline uint8_t tu_idleIgnMax(void) { return tune_page0[312]; }
+/* vanosEnable: U08 , shown = raw */
+#define TU_VANOS_ENABLE_OFF 313u
+static inline uint8_t tu_vanosEnable(void) { return (uint8_t)((tune_page0[313] >> 0) & 1u); }
+/* vanosRpmOn: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_VANOS_RPM_ON_OFF 314u
+static inline uint8_t tu_vanosRpmOn(void) { return tune_page0[314]; }
+/* vanosRpmOff: U08 rpm, shown = (raw + 0) * 100 */
+#define TU_VANOS_RPM_OFF_OFF 315u
+static inline uint8_t tu_vanosRpmOff(void) { return tune_page0[315]; }
+/* vanosMinTps: U08 %, shown = raw */
+#define TU_VANOS_MIN_TPS_OFF 316u
+static inline uint8_t tu_vanosMinTps(void) { return tune_page0[316]; }
+/* vanosMinClt: U08 C, shown = (raw - 40) * 1 */
+#define TU_VANOS_MIN_CLT_OFF 317u
+static inline uint8_t tu_vanosMinClt(void) { return tune_page0[317]; }
+/* vanosHyst: U08 rpm, shown = (raw + 0) * 10 */
+#define TU_VANOS_HYST_OFF 318u
+static inline uint8_t tu_vanosHyst(void) { return tune_page0[318]; }
+/* tachMode: U08 , shown = raw */
+#define TU_TACH_MODE_OFF 319u
+static inline uint8_t tu_tachMode(void) { return (uint8_t)((tune_page0[319] >> 0) & 3u); }
 
 /* ---- page 1: tables ---- */
 /* rpmBins: U08[16] rpm, shown = (raw + 0) * 100 */
