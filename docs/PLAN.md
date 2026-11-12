@@ -380,10 +380,16 @@ one port write per tooth.
   `knockFaultRetard` until good readings return.
 - **Live data:** per-cylinder level, learned noise and retard, event count, state bits; `ecu_cli.py knock`
   shows them as a table.
-- **Assumptions to verify on the bench (Phase 5 hardware step):** the TPIC8101 command encoding and the
-  byte order of the result (all in one block in `knock.c`; the byte order is a tune setting,
-  `knockReadOrder`), and the chip codes for prescaler, band-pass (≈ 6.7 kHz for the 84 mm bore), gain and
-  integrator time (raw codes in the tune, from the datasheet tables).
+- **Chip protocol (from TI datasheet SLIS110C):** after power-up the chip only echoes SPI, so the setup
+  starts with the "advanced mode" command 0x71; then each frame returns the answer to the previous
+  command. A result read is three frames — prescaler, channel (next sensor), integrator time — returning
+  the low byte, then bits 9–8 at the top of the next byte, then 0x71 at the start of the following read,
+  which proves the chip is present and set up. No 0x71 → the reading counts as a fault and the setup is
+  sent again. Default codes: prescaler 3 (8 MHz crystal), band-pass 40 (6.64 kHz, nearest the 84 mm
+  bore's ≈ 6.7 kHz), gain 34 (× 0.381) and integrator 10 (100 µs) from TI's worked example.
+- **To confirm on the bench (Phase 5 hardware step):** that the chip answers as the datasheet says
+  (`knockReadOrder` has two alternative layouts in case it doesn't), and the band, gain and integrator
+  codes with a test tone; see [BENCH.md](BENCH.md).
 - **Fallback if the TPIC8101 is unobtainable:** analogue bandpass + rectifier + integrator with a gated
   window, read by the MCU's ADC. Same core logic, different driver.
 
@@ -644,5 +650,7 @@ hardware/      KiCad project
 1. When the ITB parts are chosen, record bike model, bore and injector data in [CAR.md](CAR.md).
 2. Buy the Phase 0/1 kit (shopping list in [CAR.md](CAR.md)): Arduino Mega, a second small Arduino, a USB
    logic analyser, a basic oscilloscope, a donor MS41 DME, and the E36 wiring diagrams (ETM).
+   Build and run the bench test in [BENCH.md](BENCH.md) (Mega + Nano + logic analyser + TPIC8101 on a
+   breadboard), and record the results there asked for.
 3. Phase 0: work through the [CAR.md](CAR.md) checklist on the car.
 4. Phase 1 in parallel: firmware build system, HAL timers with synchronised start, and the trigger simulator.

@@ -114,7 +114,8 @@ Do these with the **stock DME still running the car**.
 | Multimeter | Resistance and pinout checks |
 | Used/dead Siemens MS41 DME matching the car's connector | Donor connector for the plug-and-play adapter |
 | E36 ETM (wiring diagrams) | DME pinout and wire colours |
-| Breadboard, jumper wires, a few LEDs and resistors | Bench testing outputs |
+| Breadboard, jumper wires, LEDs, 1 kΩ and 47 kΩ resistors, 10 × 10 kΩ potentiometers | Bench testing outputs and faking sensors ([BENCH.md](BENCH.md)) |
+| TPIC8101 knock chip (buy 3, it is a lifetime-buy part), SOIC-20 → DIP adapter, 8 MHz crystal, 2 × 22 pF, 1 MΩ, 4.7 µF, 2 × 100 nF, 2 × 3.3 nF, 2.2 nF, 4 × 47 kΩ, a 3.5 mm audio lead | Knock chip bench test ([BENCH.md](BENCH.md) stage 6) |
 
 **Before the first start (Phase 8):**
 

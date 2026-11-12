@@ -88,9 +88,9 @@ python3 tools/ecu_cli.py PORT tune list             # every setting
 python3 tools/ecu_cli.py PORT tune get ignTable     # a table, printed as a grid (top row = highest load)
 python3 tools/ecu_cli.py PORT tune set injFlow 240
 python3 tools/ecu_cli.py PORT tune set loadSource alpha-n
-python3 tools/ecu_cli.py PORT tune burn             # store in EEPROM
+python3 tools/ecu_cli.py PORT tune burn             # store in EEPROM (tune set/load/defaults store at once)
 python3 tools/ecu_cli.py PORT tune save base.tune   # back up to a file
-python3 tools/ecu_cli.py PORT tune load base.tune   # restore (then `tune burn`)
+python3 tools/ecu_cli.py PORT tune load base.tune   # restore (and store)
 ```
 
 Values are in real units (rpm, ms, degrees, %); out-of-range values are refused before they are

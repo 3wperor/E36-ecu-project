@@ -11,20 +11,24 @@ Command-line link to the ECU (the first building block of the tuner).
   Tune (names and units: definitions/ecu.toml, or `tune list`):
     python3 tools/ecu_cli.py PORT tune list            every setting with its value
     python3 tools/ecu_cli.py PORT tune get revLimit
-    python3 tools/ecu_cli.py PORT tune set revLimit 6000
+    python3 tools/ecu_cli.py PORT tune set revLimit 6000           (stored in EEPROM at once)
     python3 tools/ecu_cli.py PORT tune set injDead 1500,1100,850,700,600,520
-    python3 tools/ecu_cli.py PORT tune burn            store in EEPROM (otherwise lost at power-off)
+    python3 tools/ecu_cli.py PORT tune burn            store the ECU's RAM copy in EEPROM
     python3 tools/ecu_cli.py PORT tune save my.tune    save to a file
-    python3 tools/ecu_cli.py PORT tune load my.tune    load a file into the ECU (then `tune burn`)
-    python3 tools/ecu_cli.py PORT tune defaults        restore the default tune (then `tune burn`)
+    python3 tools/ecu_cli.py PORT tune load my.tune    load a file into the ECU and store it
+    python3 tools/ecu_cli.py PORT tune defaults        restore the default tune and store it
 
-  Bench output test (overrides the engine calculation while on):
+  Bench output test (overrides the engine calculation; runs until Ctrl+C, then
+  switches the outputs off again):
     python3 tools/ecu_cli.py PORT outputs
     python3 tools/ecu_cli.py PORT set ign=on inj=on advance=10 dwell=3 pw=2.5 tdc=60 eoi=380
     python3 tools/ecu_cli.py PORT set off
 
 PORT: Linux /dev/ttyACM0 or /dev/ttyUSB0, macOS /dev/cu.usbmodem..., Windows COM5.
 Opening the port resets an Arduino Mega, so the tool waits 2 s for it to boot.
+That reset also clears anything held only in the ECU's RAM, which is why the
+`tune` commands that change values store them in EEPROM straight away (the
+tuner GUI keeps one connection open, so there edits stay in RAM until Burn).
 BENCH USE: with real coils or injectors connected, `set` and enabling
 ignEnable / injEnable fire them.
 
@@ -321,6 +325,29 @@ def cmd_set(ecu, args):
     cfg = apply_settings(parse_cfg(ecu.request(b"p")), args)
     ecu.request(b"P" + pack_cfg(cfg))
     print(describe_cfg(parse_cfg(ecu.request(b"p"))))
+    if not cfg["enable"]:
+        return
+    # The bench test lives in RAM and the next connection resets the Mega, so
+    # stay connected while it runs, and switch it off on the way out.
+    print("bench test running - Ctrl+C to stop")
+    try:
+        cmd_watch(ecu, [])
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ecu.request(b"P" + pack_cfg(apply_settings(cfg, ["off"])))
+        print("\noutputs off")
+
+
+def tune_burn(ecu):
+    for p in DEF["pages"]:
+        ecu.request(b"B" + struct.pack("<H", p["id"]))
+    t0 = time.time()
+    while ecu.realtime()["engine"] & 0x40:
+        time.sleep(0.2)
+        if time.time() - t0 > 30:
+            raise IOError("burn did not finish")
+    return time.time() - t0
 
 
 def cmd_tune(ecu, args):
@@ -349,16 +376,10 @@ def cmd_tune(ecu, args):
         p, f = find_field(args[1])
         old = pages[p["id"]][f["offset"]:f["offset"] + f["size"]]
         ecu.write_page(p["id"], f["offset"], encode_field(f, args[2], old))
-        print(f"{f['name']} = {decode_field(f, ecu.read_page(p['id'], p['size']))} (in RAM; `tune burn` to keep)")
+        tune_burn(ecu)
+        print(f"{f['name']} = {decode_field(f, ecu.read_page(p['id'], p['size']))} (stored)")
     elif sub == "burn":
-        for p in DEF["pages"]:
-            ecu.request(b"B" + struct.pack("<H", p["id"]))
-        t0 = time.time()
-        while ecu.realtime()["engine"] & 0x40:
-            time.sleep(0.2)
-            if time.time() - t0 > 30:
-                raise IOError("burn did not finish")
-        print(f"burned ({time.time() - t0:.1f} s)")
+        print(f"burned ({tune_burn(ecu):.1f} s)")
     elif sub == "save":
         out = {"signature": DEF["signature"], "layout_hash": DEF["layout_hash"],
                "pages": {str(i): b.hex() for i, b in pages.items()},
@@ -372,11 +393,13 @@ def cmd_tune(ecu, args):
             raise ValueError("tune file is for a different firmware layout")
         for p in DEF["pages"]:
             ecu.write_page(p["id"], 0, bytes.fromhex(t["pages"][str(p["id"])]))
-        print("loaded into the ECU's RAM; `tune burn` to keep")
+        tune_burn(ecu)
+        print("loaded into the ECU and stored")
     elif sub == "defaults":
         for p in DEF["pages"]:
             ecu.request(b"D" + struct.pack("<H", p["id"]))
-        print("defaults restored in RAM; `tune burn` to keep")
+        tune_burn(ecu)
+        print("defaults restored and stored")
     else:
         raise ValueError(f"unknown tune command {sub!r}")
 

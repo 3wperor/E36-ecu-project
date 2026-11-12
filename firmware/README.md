@@ -185,21 +185,12 @@ the same as its own controller's display, then enable wideband mode. Narrowband 
 
 ### Knock chip bench test (Phase 5 hardware step)
 
-The firmware's view of the TPIC8101 rests on assumptions that can only be checked with the chip:
-its command encoding (`knock.c`, one marked block), the byte order of its result (tune setting
-`knockReadOrder`) and its codes for prescaler, band-pass, gain and integrator time (tune settings,
-from the datasheet tables). Bench procedure:
-
-1. Wire a TPIC8101 module to the Mega: SCLK → D52, SI → D51, SO → D50, CS → D53, INT/HOLD → D35,
-   5 V, GND, and the crystal/clock the module uses (set `knockPrescaler` for it from the datasheet).
-2. Feed sensor input 1 from a signal generator through the module's input network: a 6.7 kHz sine,
-   a few hundred mV. Run the trigger simulator at 3000 rpm, set `knockEnable` on.
-3. `python3 tools/ecu_cli.py PORT knock`: the levels should be steady and rise in proportion to the
-   generator amplitude. If they jump around or look like garbage, flip `knockReadOrder`.
-4. Sweep `knockBand`: the level peaks at the code nearest 6.7 kHz. Set `knockGain` so the normal
-   level sits around 100–200 of 1023.
-5. Pulse the generator only during some windows (or swap sensor inputs) and check that the right
-   cylinders show knock and retard.
+The chip protocol follows TI's datasheet (SLIS110C): the setup starts with the "advanced mode"
+command 0x71, and each window is read with three SPI frames (see `knock.c`, one marked block). The
+simulator's fake chip behaves the same way, including the echo-only mode after power-up. What only
+the real chip can confirm: that it answers as the datasheet says (`knockReadOrder` has two other
+layouts in case not) and the band, gain and integrator codes. The full breadboard build and test
+steps are in [../docs/BENCH.md](../docs/BENCH.md), step 6.
 
 On the car (Phase 7, sniffer mode) the band is checked again against the real engine's knock sound.
 
@@ -214,8 +205,7 @@ With the trigger simulator driving the Mega, a logic analyser on the output pins
 
 ```sh
 python3 tools/ecu_cli.py /dev/ttyACM0 set ign=on inj=on advance=10 dwell=3 pw=2.5 tdc=60 eoi=380
-python3 tools/ecu_cli.py /dev/ttyACM0 watch
-python3 tools/ecu_cli.py /dev/ttyACM0 set off
+# shows live data while the test runs; Ctrl+C switches the outputs off again
 ```
 
 Outputs are off at every power-up and must be enabled like this. **Bench only:** do not connect real
