@@ -591,41 +591,41 @@ help = "Timing removed from every cylinder while the knock chip reports nonsense
 name = "knockPrescaler"
 type = "U08"
 min = 0
-max = 31
-default = 6
-help = "TPIC8101 prescaler code for its clock input (datasheet table; 6 is commonly used for 8 MHz). VERIFY on the bench."
+max = 8
+default = 3
+help = "TPIC8101 clock (crystal) frequency code: 0 = 4 MHz, 1 = 5, 2 = 6, 3 = 8, 4 = 10, 5 = 12, 6 = 16, 7 = 20, 8 = 24 MHz (datasheet table 1). The bench build uses an 8 MHz crystal = 3."
 
 [[pages.fields]]
 name = "knockBand"
 type = "U08"
 min = 0
 max = 63
-default = 42
-help = "TPIC8101 band-pass code (datasheet table, 1.2-20 kHz). PLACEHOLDER: pick the code nearest the engine's knock frequency (about 6.7 kHz for an 84 mm bore) on the bench."
+default = 40
+help = "TPIC8101 band-pass centre frequency code (datasheet table 3, 1.22-19.98 kHz). 40 = 6.64 kHz, nearest the M52's ~6.7 kHz knock frequency (84 mm bore); 39 = 6.37, 41 = 6.94 kHz. Confirm by sweeping on the bench and again on the car."
 
 [[pages.fields]]
 name = "knockGain"
 type = "U08"
 min = 0
 max = 63
-default = 32
-help = "TPIC8101 gain code (datasheet table). Set on the bench so normal noise reads well below full scale."
+default = 34
+help = "TPIC8101 programmable gain code (datasheet table 3): 0 = x2 down to 63 = x0.111; 34 = x0.381 (TI's example for a 300 mVpp sensor). Set so normal noise reads around 100-200 of 1023."
 
 [[pages.fields]]
 name = "knockIntTime"
 type = "U08"
 min = 0
 max = 31
-default = 16
-help = "TPIC8101 integrator time constant code (datasheet table)."
+default = 10
+help = "TPIC8101 integrator time constant code (datasheet table 3): 0 = 40 us ... 31 = 600 us; 10 = 100 us suits a ~3 ms window (TI's worked example)."
 
 [[pages.fields]]
 name = "knockReadOrder"
 type = "U08"
-bits = [0, 0]
-options = ["MSB first (D9-D2, D1-D0)", "LSB first (D7-D0, D9-D8)"]
+bits = [0, 1]
+options = ["Datasheet (D7-D0, D9-D8 high)", "D7-D0, D9-D8 low", "D9-D2, D1-D0 high", "INVALID"]
 default = 0
-help = "How the chip returns its 10-bit result over two SPI bytes. VERIFY on the bench: the right choice gives a steady low noise level that rises with engine speed."
+help = "How the chip returns its 10-bit result over two SPI bytes. The datasheet layout is the default; only change it if the bench test shows levels that jump around instead of following the test tone."
 
 # ---- overrun fuel cut (Phase 9a)
 [[pages.fields]]

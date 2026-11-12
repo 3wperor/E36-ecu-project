@@ -134,8 +134,10 @@ static void test_fault_and_curve(void)
     CHECK(knock_threshold_x10(2500) == 23 || knock_threshold_x10(2500) == 24);   /* half way 25 -> 22 */
     CHECK(knock_threshold_x10(8000) == 20);
 
-    CHECK(knock_parse(0xAB, 0xC0, 0) == 687);       /* MSB first: D9..D2 then D1..D0 in bits 7..6 */
-    CHECK(knock_parse(0x34, 0x02, 1) == 0x234);     /* LSB first: D7..D0 then D9..D8 */
+    CHECK(knock_parse(0x34, 0x80, 0) == 0x234);     /* datasheet: D7..D0, then D9..D8 in bits 7..6 */
+    CHECK(knock_parse(0xFF, 0xC0, 0) == 1023);
+    CHECK(knock_parse(0x34, 0x02, 1) == 0x234);     /* D7..D0, then D9..D8 in bits 1..0 */
+    CHECK(knock_parse(0xAB, 0xC0, 2) == 687);       /* D9..D2, then D1..D0 in bits 7..6 */
 }
 
 int main(void)

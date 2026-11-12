@@ -108,11 +108,15 @@ KNOCK_INLINE void knock_build_windows(uint8_t act[120], uint16_t tdc_offset_x10,
     }
 }
 
-/* Two SPI result bytes -> 10-bit level (order: tune knockReadOrder). */
-KNOCK_INLINE uint16_t knock_parse(uint8_t b0, uint8_t b1, uint8_t lsb_first)
+/* Two SPI result bytes -> 10-bit level, layout = tune knockReadOrder:
+ * 0 datasheet: D7..D0, then D9..D8 in bits 7..6
+ * 1            D7..D0, then D9..D8 in bits 1..0
+ * 2            D9..D2, then D1..D0 in bits 7..6 */
+KNOCK_INLINE uint16_t knock_parse(uint8_t b0, uint8_t b1, uint8_t order)
 {
-    if (lsb_first) return (uint16_t)(b0 | ((uint16_t)(b1 & 0x03u) << 8));
-    return (uint16_t)(((uint16_t)b0 << 2) | (b1 >> 6));
+    if (order == 1) return (uint16_t)(b0 | ((uint16_t)(b1 & 0x03u) << 8));
+    if (order == 2) return (uint16_t)(((uint16_t)b0 << 2) | (b1 >> 6));
+    return (uint16_t)(b0 | ((uint16_t)(b1 >> 6) << 8));
 }
 
 /* Knock threshold (x10) at rpm, from the tune curve. */

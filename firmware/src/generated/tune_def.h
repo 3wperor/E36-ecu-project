@@ -258,7 +258,7 @@ static inline uint8_t tu_knockGain(void) { return tune_page0[253]; }
 static inline uint8_t tu_knockIntTime(void) { return tune_page0[254]; }
 /* knockReadOrder: U08 , shown = raw */
 #define TU_KNOCK_READ_ORDER_OFF 255u
-static inline uint8_t tu_knockReadOrder(void) { return (uint8_t)((tune_page0[255] >> 0) & 1u); }
+static inline uint8_t tu_knockReadOrder(void) { return (uint8_t)((tune_page0[255] >> 0) & 3u); }
 /* dfcoEnable: U08 , shown = raw */
 #define TU_DFCO_ENABLE_OFF 256u
 static inline uint8_t tu_dfcoEnable(void) { return (uint8_t)((tune_page0[256] >> 0) & 1u); }

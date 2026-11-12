@@ -423,8 +423,10 @@ static int fake_channel = -1;
 static int fake_knock_cyl = -1;     /* 0..5 = inject knock on that cylinder */
 static int fake_level = 120;        /* background noise level */
 static int fake_zero;               /* chip returns 0 (fault) */
-static uint8_t fake_out[2];
-static int fake_out_n;
+static int fake_adv;                /* 0 = default (echo) mode, 1 = advanced */
+static uint8_t fake_prev;           /* previous command, answered by the next frame */
+static int fake_result;             /* integrator result latched at HOLD */
+static int fake_adv_cmds;           /* 0x71 commands seen */
 static double win_open_angle;
 static int win_open_channel;
 static struct { int n, bad_channel, bad_angle, cyl[6]; double min_start, max_start, min_len, max_len; } kst;
@@ -478,10 +480,7 @@ static void on_hold(struct avr_irq_t *irq, uint32_t v, void *p)
     } else {
         kst.bad_angle++;
     }
-    int level = fake_zero ? 0 : (c == fake_knock_cyl ? 450 : fake_level + (int)(avr->cycle % 21) - 10);
-    fake_out[0] = (uint8_t)(level >> 2);
-    fake_out[1] = (uint8_t)((level & 3) << 6);
-    fake_out_n = 0;
+    fake_result = c == fake_knock_cyl ? 450 : fake_level + (int)(avr->cycle % 21) - 10;
 }
 
 static uint32_t tach_rises, tach_level;
@@ -496,9 +495,18 @@ static void on_tach(struct avr_irq_t *irq, uint32_t v, void *p)
 static void on_spi(struct avr_irq_t *irq, uint32_t v, void *p)
 {
     (void)irq; (void)p;
+    uint8_t reply;
+    if (fake_zero) reply = 0;                                /* dead chip / MISO stuck low */
+    else if (!fake_adv) reply = (uint8_t)v;                  /* default mode: SDO echoes SDI */
+    else if ((fake_prev & 0xE0) == 0x40) reply = (uint8_t)(fake_result & 0xFF);       /* prescaler */
+    else if ((fake_prev & 0xFE) == 0xE0) reply = (uint8_t)((fake_result >> 8) << 6);  /* channel */
+    else if ((fake_prev & 0xE0) == 0xC0) reply = 0x71;      /* int. time */
+    else if ((fake_prev & 0xC0) == 0x00) reply = 0x01;      /* band-pass */
+    else if ((fake_prev & 0xC0) == 0x80) reply = 0xE0;      /* gain */
+    else reply = 0xFF;
     if ((v & 0xFE) == 0xE0) fake_channel = (int)(v & 1);     /* channel select */
-    uint8_t reply = fake_out_n < 2 ? fake_out[fake_out_n] : 0xFF;
-    fake_out_n++;
+    if (v == 0x71) { fake_adv = 1; fake_adv_cmds++; }
+    fake_prev = (uint8_t)v;
     avr_raise_irq(spi_in, reply);
 }
 
@@ -533,7 +541,8 @@ static void sim_boot(const char *elf, const char *mcu, const uint8_t *eeprom)
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('C'), 2), on_hold, NULL);
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), 5), on_tach, NULL);
     fake_channel = -1;
-    fake_out_n = 2;
+    fake_adv = 0;                       /* the chip powers up with the ECU */
+    fake_prev = 0xFF;
     if (eeprom) {
         avr_eeprom_desc_t ee = { .ee = (uint8_t *)eeprom, .offset = 0, .size = 4096 };
         avr_ioctl(avr, AVR_IOCTL_EEPROM_SET, &ee);
@@ -958,6 +967,16 @@ int main(int argc, char **argv)
     run_us(300000);
     CHECK(get_rt(&r));
     CHECK(!(R.knockState & 0x08));
+
+    /* chip browns out and comes back in default (echo) mode: the ECU notices
+     * the missing 0x71 reply, sends the setup again and carries on */
+    int adv0 = fake_adv_cmds;
+    fake_adv = 0;
+    run_us(600000);
+    CHECK(get_rt(&r));
+    printf("knock:     chip reset to echo mode -> setup sent again (%d x 0x71 in total), state 0x%02X\n",
+           fake_adv_cmds, R.knockState);
+    CHECK(adv0 >= 1 && fake_adv_cmds > adv0 && fake_adv && !(R.knockState & 0x08));
 
     /* disabled: no windows, no retard */
     uint8_t off = 0;

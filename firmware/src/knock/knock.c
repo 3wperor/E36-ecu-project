@@ -10,16 +10,22 @@
 #include "status.h"
 
 /*
- * ---- TPIC8101 command encoding --------------------------------------------
- * VERIFY AGAINST THE TI DATASHEET BEFORE FIRST USE. These follow the command
- * layout commonly used for the TPIC8101 (8-bit commands, one per chip-select
- * frame, SPI mode 1, MSB first): the top bits select the register, the low
- * bits carry the code chosen in the tune (knockPrescaler/Band/Gain/IntTime,
- * see the datasheet tables). The 10-bit integrator result is clocked out on
- * SO during the two frames after INT/HOLD goes low; its byte order is the
- * tune setting knockReadOrder. Everything chip-specific is in this block.
+ * ---- TPIC8101 command encoding (TI datasheet SLIS110C, tables 1 and 2) ----
+ * 8-bit commands, one per chip-select frame, SPI mode 1, MSB first. After
+ * power-up the chip is in "default" mode, where SDO only echoes SDI; command
+ * 0x71 switches it to "advanced" mode (until it loses power), where each
+ * frame clocks out the response to the PREVIOUS command:
+ *   after prescaler     -> integrator result D7..D0
+ *   after channel       -> D9..D8 in bits 7..6, six zeros
+ *   after int. time     -> 0x71 (proves the chip is there and in advanced mode)
+ * So a result read is [prescaler, channel (next sensor), int. time]: frame 2
+ * returns the low byte, frame 3 the top bits, and frame 1 of the next read
+ * returns 0x71. The result layout is the tune setting knockReadOrder (0 =
+ * the datasheet's). Everything chip-specific is in this block.
  */
-#define TPIC_PRESCALER(p) ((uint8_t)(0x40u | (((p) & 0x1Fu) << 1)))   /* bit 0 = 0: SO active */
+#define TPIC_ADVANCED     ((uint8_t)0x71u)
+#define TPIC_ALIVE        ((uint8_t)0x71u)                             /* response to TPIC_INTTIME */
+#define TPIC_PRESCALER(p) ((uint8_t)(0x40u | (((p) & 0x0Fu) << 1)))   /* bit 0 = 0: SDO active */
 #define TPIC_BAND(b)      ((uint8_t)(0x00u | ((b) & 0x3Fu)))
 #define TPIC_GAIN(g)      ((uint8_t)(0x80u | ((g) & 0x3Fu)))
 #define TPIC_INTTIME(t)   ((uint8_t)(0xC0u | ((t) & 0x1Fu)))
@@ -39,7 +45,7 @@ static knock_t kn;
 /* SPI exchange (ISR side) */
 enum { XFER_CONFIG = 0, XFER_RESULT = 1 };
 static volatile uint8_t tx[6], rx[6], xn, xi, xbusy, xkind, xcyl;
-static volatile uint8_t res_ready, res_cyl, res_b0, res_b1;
+static volatile uint8_t res_ready, res_cyl, res_b0, res_b1, res_alive;
 static volatile uint16_t res_skipped;
 
 /* main-loop state */
@@ -48,6 +54,7 @@ static uint8_t cfg_sig[4];
 static uint16_t win_tdc;
 static uint8_t win_start, win_len, win_valid;
 static uint8_t was_enabled;
+static uint8_t dead_reads;              /* reads in a row without the 0x71 reply */
 
 static inline void hold_low(void)  { AUX2_PORT &= (uint8_t)~(1 << AUX2_KNOCK_HOLD); }
 static inline void hold_high(void) { AUX2_PORT |= (1 << AUX2_KNOCK_HOLD); }
@@ -78,8 +85,9 @@ ISR(SPI_STC_vect)
     }
     xbusy = 0;
     if (xkind == XFER_RESULT) {
-        res_b0 = rx[0];
-        res_b1 = rx[1];
+        res_alive = rx[0] == TPIC_ALIVE;   /* response to the int. time command sent last */
+        res_b0 = rx[1];
+        res_b1 = rx[2];
         res_cyl = xcyl;
         res_ready = 1;
     }
@@ -97,9 +105,10 @@ void knock_tooth_events(uint8_t a)
              * back are this window's level (thrown away if the window was
              * skipped because the chip was on the other sensor) */
             uint8_t ch = knock_channel(knock_next_cyl[cyl]);
-            tx[0] = TPIC_CHANNEL(ch);
-            tx[1] = TPIC_GAIN(tu_knockGain());
-            xfer_start((p & 0x80u) ? XFER_CONFIG : XFER_RESULT, 2, cyl);
+            tx[0] = TPIC_PRESCALER(tu_knockPrescaler());
+            tx[1] = TPIC_CHANNEL(ch);
+            tx[2] = TPIC_INTTIME(tu_knockIntTime());
+            xfer_start((p & 0x80u) ? XFER_CONFIG : XFER_RESULT, 3, cyl);
             chip_ch = ch;
         } else {
             res_skipped++;
@@ -141,19 +150,28 @@ void knock_init(void)
 
 void knock_poll(void)
 {
-    uint8_t ready, cyl = 0, b0 = 0, b1 = 0;
+    uint8_t ready, cyl = 0, b0 = 0, b1 = 0, alive = 0;
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         ready = res_ready;
         if (ready) {
             cyl = res_cyl;
             b0 = res_b0;
             b1 = res_b1;
+            alive = res_alive;
             res_ready = 0;
         }
     }
     if (ready) {
-        knock_sample(&kn, cyl, knock_parse(b0, b1, tu_knockReadOrder()), (kn.state & KNOCK_ST_ACTIVE) != 0,
-                     rt.rpm);
+        /* no 0x71 echo: chip missing, unpowered or reset (default mode) ->
+         * an impossible reading, which the fault logic counts */
+        uint16_t level = alive ? knock_parse(b0, b1, tu_knockReadOrder()) : 0;
+        if (alive) {
+            dead_reads = 0;
+        } else if (++dead_reads >= KNOCK_FAULT_SAMPLES) {
+            dead_reads = 0;
+            configured = 0;             /* chip may have lost power: send the setup (and 0x71) again */
+        }
+        knock_sample(&kn, cyl, level, (kn.state & KNOCK_ST_ACTIVE) != 0, rt.rpm);
     }
 }
 
@@ -168,12 +186,13 @@ void knock_update(uint16_t rpm, uint16_t air_mg, int16_t clt_x10, uint8_t full_s
     } else if (!configured || memcmp(sig, cfg_sig, sizeof sig) != 0) {
         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             if (!xbusy && !(AUX2_PORT & (1 << AUX2_KNOCK_HOLD)) && !knock_pending) {
-                tx[0] = TPIC_PRESCALER(sig[0]);
-                tx[1] = TPIC_BAND(sig[1]);
-                tx[2] = TPIC_GAIN(sig[2]);
-                tx[3] = TPIC_INTTIME(sig[3]);
+                tx[0] = TPIC_ADVANCED;          /* needed after every chip power-up */
+                tx[1] = TPIC_PRESCALER(sig[0]);
+                tx[2] = TPIC_BAND(sig[1]);
+                tx[3] = TPIC_GAIN(sig[2]);
                 tx[4] = TPIC_CHANNEL(0);
-                xfer_start(XFER_CONFIG, 5, 0);
+                tx[5] = TPIC_INTTIME(sig[3]);   /* last: the next read's first byte is 0x71 */
+                xfer_start(XFER_CONFIG, 6, 0);
                 chip_ch = 0;
                 memcpy(cfg_sig, sig, sizeof sig);
                 configured = 1;
